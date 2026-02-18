@@ -4,6 +4,8 @@ import urllib.request
 import urllib.error
 from typing import Optional
 
+from trader.retry import retry_with_backoff
+
 
 class HTTPClient:
     """Basic HTTP client wrapper for making requests."""
@@ -43,11 +45,13 @@ class Scraper:
         """
         self.client = client or HTTPClient()
 
+    @retry_with_backoff(max_attempts=5)
     def fetch(self, url: str) -> str:
         """Fetch content from a URL.
         
-        This is a stub method that will be enhanced with error handling
-        in subsequent stories (retry logic, circuit breaker, etc.).
+        This method uses exponential backoff retry (max 5 attempts)
+        for transient failures like connection errors, timeouts,
+        and HTTP 5xx or 429 responses.
         
         Args:
             url: The URL to fetch.
@@ -56,7 +60,8 @@ class Scraper:
             The fetched content as a string.
             
         Raises:
-            urllib.error.URLError: If the request fails.
+            urllib.error.URLError: If all retry attempts fail.
+            urllib.error.HTTPError: If a non-retryable HTTP error occurs (4xx except 429).
         """
         return self.client.get(url)
 
