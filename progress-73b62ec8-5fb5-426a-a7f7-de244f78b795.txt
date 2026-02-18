@@ -8,4 +8,14 @@ Started: 2026-02-18
 - Pure Python, no build step required
 - Tests should be in tests/ directory
 
+## 2026-02-18 18:12 EST - US-001: Create trader module structure with scraper.py
+- Created `trader/` directory with `__init__.py` exporting `Scraper` class
+- Created `trader/scraper.py` with `HTTPClient` wrapper and `Scraper` class
+- `Scraper.fetch()` method stub delegates to `HTTPClient.get()`
+- `Scraper.scrape()` placeholder method returns structured dict
+- Created `tests/test_trader.py` with 11 comprehensive tests
+- All tests pass, syntax validation passes
+- Files changed: `trader/__init__.py`, `trader/scraper.py`, `tests/__init__.py`, `tests/test_trader.py`
+- **Learnings:** Using `urllib.request` for HTTP; module structure is straightforward; tests use unittest.mock for external calls
+
 ---
