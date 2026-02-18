@@ -7,6 +7,8 @@ Started: 2026-02-18
 - Python project using pytest for testing
 - Pure Python, no build step required
 - Tests should be in tests/ directory
+- Import from sibling modules: `from trader.retry import ...`
+- Mock `time.sleep` in retry tests to speed up execution
 
 ## 2026-02-18 18:12 EST - US-001: Create trader module structure with scraper.py
 - Created `trader/` directory with `__init__.py` exporting `Scraper` class
@@ -17,5 +19,52 @@ Started: 2026-02-18
 - All tests pass, syntax validation passes
 - Files changed: `trader/__init__.py`, `trader/scraper.py`, `tests/__init__.py`, `tests/test_trader.py`
 - **Learnings:** Using `urllib.request` for HTTP; module structure is straightforward; tests use unittest.mock for external calls
+
+## 2026-02-18 18:27 EST - US-002: Implement exponential backoff retry decorator
+- Created `trader/retry.py` with `@retry_with_backoff` decorator
+- Max 5 attempts with exponential backoff (1s, 2s, 4s, 8s, 16s)
+- Retryable errors: ConnectionError, TimeoutError, HTTP 5xx, 429
+- Non-retryable errors: 4xx client errors (except 429) raise immediately
+- Added custom exceptions: `RetryableHTTPError`, `NonRetryableHTTPError`, `TransientError`
+- Created `tests/test_retry.py` with 29 comprehensive tests covering all acceptance criteria
+- All 40 tests pass (11 existing + 29 new)
+- Files changed: `trader/retry.py`, `tests/test_retry.py`
+- **Learnings:** Using `functools.wraps` preserves function metadata; `time.sleep` is mockable in tests; urllib.error.HTTPError requires all constructor args
+
+## 2026-02-18 18:37 EST - US-003: Integrate retry decorator into Scraper fetch methods
+- Applied `@retry_with_backoff(max_attempts=5)` decorator to `Scraper.fetch()` method
+- Imported `retry_with_backoff` from `trader.retry` in scraper.py
+- Updated `fetch()` docstring to document retry behavior
+- Added `TestScraperRetryBehavior` test class with 11 comprehensive tests:
+  - Retry on HTTP 500/429 errors
+  - Retry on ConnectionError and TimeoutError
+  - Immediate raise on non-retryable 4xx errors (400, 404)
+  - Max 5 attempts with exponential backoff delays (1s, 2s, 4s, 8s)
+  - Verify `scrape()` method uses retry-decorated `fetch()`
+  - Verify import works correctly
+- All 51 tests pass (11 original + 29 retry + 11 new scraper retry tests)
+- Typecheck passes (syntax validation)
+- Files changed: `trader/scraper.py`, `tests/test_trader.py`
+- **Learnings:** Mocking `time.sleep` in tests speeds up retry tests significantly; importing from sibling modules uses `from trader.retry import`
+## 2026-02-18 18:47 EST - US-004: Implement circuit breaker class
+- Created `trader/circuit_breaker.py` with `CircuitBreaker` class
+- Implemented states: CLOSED (normal), OPEN (failing fast), HALF_OPEN (testing)
+- Config: failure_threshold (default 5), recovery_timeout (default 30s)
+- State transitions: CLOSED→OPEN on threshold failures, OPEN→HALF_OPEN after timeout, HALF_OPEN→CLOSED on success, HALF_OPEN→OPEN on failure
+- Created `CircuitBreakerError` exception raised when circuit is OPEN
+- `CircuitBreaker.call()` wraps functions and tracks failures
+- Can also be used as decorator: `@cb` or `@CircuitBreaker()`
+- Created `tests/test_circuit_breaker.py` with 19 comprehensive tests covering:
+  - Initialization with default and custom values
+  - State transitions (CLOSED→OPEN→HALF_OPEN→CLOSED)
+  - Failing fast when OPEN
+  - Recovery timeout behavior
+  - Call method with args/kwargs
+  - Decorator usage
+  - Full lifecycle integration test
+- All 70 tests pass (51 existing + 19 new circuit breaker tests)
+- Typecheck passes (syntax validation)
+- Files changed: `trader/circuit_breaker.py`, `tests/test_circuit_breaker.py`
+- **Learnings:** Using `Enum` for state management; mocking `time.time()` for time-based tests; circuit breaker pattern prevents cascading failures
 
 ---
