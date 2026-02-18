@@ -1,0 +1,11 @@
+# Progress Log
+Run: 73b62ec8-5fb5-426a-a7f7-de244f78b795
+Task: Add error handling to trader/scraper.py: exponential backoff retry decorator (max 5 attempts), circuit breaker class, state saving to JSON file on crash.
+Started: 2026-02-18
+
+## Codebase Patterns
+- Python project using pytest for testing
+- Pure Python, no build step required
+- Tests should be in tests/ directory
+
+---
