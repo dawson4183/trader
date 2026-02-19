@@ -3,7 +3,7 @@
 import sqlite3
 import threading
 from contextlib import contextmanager
-from typing import Generator, Optional, Set
+from typing import Any, Dict, Generator, List, Optional, Set, Tuple
 
 
 class ConnectionPool:
@@ -235,3 +235,55 @@ class Transaction:
             if self.cursor is not None:
                 self.cursor.close()
                 self.cursor = None
+
+
+def insert_items_batch(
+    pool: ConnectionPool,
+    items: List[Dict[str, Any]],
+    batch_size: int = 100
+) -> Tuple[int, int]:
+    """Insert items into the database in batches using INSERT OR IGNORE.
+
+    Batches items into groups of specified size and inserts them into
+    the items table. Uses INSERT OR IGNORE to handle duplicates without
+    raising errors. Each batch is wrapped in a transaction.
+
+    Args:
+        pool: The ConnectionPool to use for database connections.
+        items: List of item dictionaries with keys 'name', 'price', 'url'.
+        batch_size: Number of items to insert per batch. Default is 100.
+
+    Returns:
+        A tuple of (inserted_count, duplicate_count) where:
+        - inserted_count: Number of rows actually inserted
+        - duplicate_count: Number of rows skipped due to duplicates
+    """
+    if not items:
+        return (0, 0)
+
+    total_inserted = 0
+    total_duplicates = 0
+
+    # Process items in batches
+    for i in range(0, len(items), batch_size):
+        batch = items[i:i + batch_size]
+        
+        with pool as conn:
+            with Transaction(conn) as cursor:
+                # Build the INSERT OR IGNORE query with placeholders
+                placeholders = ', '.join(['(?, ?, ?)'] * len(batch))
+                query = f"INSERT OR IGNORE INTO items (name, price, url) VALUES {placeholders}"
+                
+                # Flatten the batch data into a single list of values
+                values: List[Any] = []
+                for item in batch:
+                    values.append(item.get('name'))
+                    values.append(item.get('price'))
+                    values.append(item.get('url'))
+                
+                cursor.execute(query, values)
+                batch_inserted = cursor.rowcount
+                total_inserted += batch_inserted
+                total_duplicates += len(batch) - batch_inserted
+
+    return (total_inserted, total_duplicates)
