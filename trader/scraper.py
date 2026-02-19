@@ -2,12 +2,109 @@
 
 Provides a Scraper class that tracks its runs and status in the database,
 providing foundation for scraper status checks and health monitoring.
+
+Also includes scraper_retry decorator with exponential backoff for network operations.
 """
 
-from typing import Optional, Literal, List, Dict, Any
+import functools
+import time
+import urllib.error
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+)
 
 from trader.database import DatabaseConnection
 from trader.schema import create_tables
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+# Network-related exceptions that trigger retry
+NETWORK_EXCEPTIONS: Tuple[Type[Exception], ...] = (
+    urllib.error.HTTPError,
+    urllib.error.URLError,
+    TimeoutError,
+    ConnectionError,
+    ConnectionRefusedError,
+    ConnectionResetError,
+    ConnectionAbortedError,
+)
+
+
+def scraper_retry(
+    func: Optional[F] = None,
+    *,
+    max_attempts: int = 5,
+    initial_delay: float = 10.0,
+    max_delay: float = 240.0,
+    backoff_multiplier: float = 2.0,
+) -> Union[F, Callable[[F], F]]:
+    """Retry decorator with exponential backoff for scraper network operations.
+
+    Specialized retry decorator with specific parameters:
+    - 5 max attempts
+    - 10 second initial delay
+    - 240 second maximum delay cap
+    - 2.0 exponential backoff multiplier
+    - Catches only network-related exceptions
+
+    Args:
+        func: The function to decorate (for bare decorator usage).
+        max_attempts: Maximum number of retry attempts. Defaults to 5.
+        initial_delay: Initial delay between retries in seconds. Defaults to 10.
+        max_delay: Maximum delay cap between retries in seconds. Defaults to 240.
+        backoff_multiplier: Multiplier for delay after each retry. Defaults to 2.0.
+
+    Returns:
+        Decorated function with retry logic.
+
+    Example:
+        >>> @scraper_retry
+        ... def fetch_data(url: str) -> str:
+        ...     return requests.get(url).text
+        >>>
+        >>> @scraper_retry(max_attempts=3)
+        ... def fetch_with_custom_attempts(url: str) -> str:
+        ...     return requests.get(url).text
+
+    """
+
+    def decorator(wrapped_func: F) -> F:
+        @functools.wraps(wrapped_func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            current_delay = initial_delay
+            last_exception: Optional[Exception] = None
+
+            for attempt in range(max_attempts):
+                try:
+                    return wrapped_func(*args, **kwargs)
+                except NETWORK_EXCEPTIONS as e:
+                    last_exception = e
+                    if attempt < max_attempts - 1:
+                        time.sleep(current_delay)
+                        current_delay = min(
+                            current_delay * backoff_multiplier, max_delay
+                        )
+
+            # All retries exhausted - re-raise the last exception
+            if last_exception is not None:
+                raise last_exception
+
+            raise RuntimeError(f"Function failed after {max_attempts} attempts")
+
+        return wrapper  # type: ignore
+
+    if func is None:
+        return decorator
+    return decorator(func)
 
 StatusType = Literal["idle", "running", "error"]
 RunStatusType = Literal["running", "completed", "failed"]
