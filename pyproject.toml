@@ -9,7 +9,7 @@ packages = ["trader"]
 name = "trader"
 version = "0.1.0"
 description = "Item parser with data validation"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "beautifulsoup4>=4.9.0",
     "lxml>=4.6.0",

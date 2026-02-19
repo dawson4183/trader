@@ -77,8 +77,9 @@ class DatabaseConnection:
         else:
             cursor.execute(query, parameters)
 
-        # Fetch results if it's a SELECT query
-        if query.strip().upper().startswith("SELECT"):
+        # Fetch results if it's a SELECT or PRAGMA query
+        query_upper = query.strip().upper()
+        if query_upper.startswith("SELECT") or query_upper.startswith("PRAGMA"):
             rows = cursor.fetchall()
             result = [dict(row) for row in rows]
         else:

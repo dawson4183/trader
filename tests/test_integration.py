@@ -1,236 +1,238 @@
-"""Integration tests for the trader module.
+"""Integration tests for the trader package.
 
-This module provides end-to-end tests covering the full parsing workflow,
-including HTML validation, price validation, deduplication, and error handling.
+These tests verify the complete end-to-end workflow of the trader package,
+including HTML parsing, validation, and deduplication.
 """
 
-from typing import Any, Dict, List, cast
-
 import pytest
-from trader.item_parser import validate_html_structure, validate_price, deduplicate_items
-from trader.exceptions import ValidationError
+
+from trader import (
+    ItemParser,
+    ValidationError,
+    deduplicate_items,
+    parse_item,
+    validate_html_structure,
+    validate_price,
+)
 
 
-class TestIntegrationWorkflow:
-    """End-to-end integration tests for the full parsing workflow."""
+class TestFullParsingWorkflow:
+    """Integration tests for the complete parsing workflow."""
 
-    def test_full_parsing_workflow_with_valid_html(self) -> None:
-        """Test complete workflow with valid HTML and valid items.
+    def test_full_parsing_workflow_with_valid_html(self):
+        """Test complete workflow from HTML to deduplicated items.
         
-        This test validates HTML structure, parsing items, validating prices,
-        and deduplicating the final list.
+        Verifies that:
+        - HTML structure is validated
+        - Items are extracted correctly
+        - Prices are validated during extraction
+        - Duplicates are removed
         """
-        # Sample HTML with items
         html = """
         <html>
             <body>
-                <div class="item" data-id="1">
-                    <span class="name">Sword of Truth</span>
-                    <span class="price">99.99</span>
+                <div class="item-list">
+                    <div class="item" data-item-hash="hash001" data-price="19.99" data-name="Widget A">Widget A</div>
+                    <div class="item" data-item-hash="hash002" data-price="29.99" data-name="Widget B">Widget B</div>
+                    <div class="item" data-item-hash="hash003" data-price="39.99" data-name="Widget C">Widget C</div>
                 </div>
-                <div class="item" data-id="2">
-                    <span class="name">Shield of Valor</span>
-                    <span class="price">49.99</span>
-                </div>
+                <div class="price-info">Price Information</div>
             </body>
         </html>
         """
+        config = {'required_selectors': ['.item-list', '.item', '.price-info']}
+        parser = ItemParser(config)
         
-        # Step 1: Validate HTML structure
-        required_selectors = ["div.item", "span.name", "span.price"]
-        validate_html_structure(html, required_selectors)
+        items = parser.parse(html)
         
-        # Step 2: Simulate parsed items (as if from HTML)
-        items: List[Dict[str, Any]] = [
-            {"item_hash": "abc123", "name": "Sword of Truth", "price": 99.99},
-            {"item_hash": "def456", "name": "Shield of Valor", "price": 49.99},
-        ]
-        
-        # Step 3: Validate prices for each item
-        for item in items:
-            validate_price(cast(float, item["price"]))
-        
-        # Step 4: Deduplicate items
-        unique_items = deduplicate_items(items)
-        
-        # Assertions
-        assert len(unique_items) == 2
-        assert unique_items[0]["name"] == "Sword of Truth"
-        assert unique_items[1]["name"] == "Shield of Valor"
+        assert len(items) == 3
+        assert items[0]['item_hash'] == 'hash001'
+        assert items[0]['price'] == 19.99
+        assert items[0]['name'] == 'Widget A'
+        assert items[1]['item_hash'] == 'hash002'
+        assert items[2]['item_hash'] == 'hash003'
 
-    def test_error_handling_invalid_html_missing_selector(self) -> None:
-        """Test error handling when HTML is missing required selectors."""
+    def test_error_handling_invalid_html_missing_selector(self):
+        """Test that ValidationError is raised when required selectors are missing.
+        
+        Verifies that the parser raises a descriptive ValidationError when
+        the HTML doesn't contain all required CSS selectors.
+        """
         html = """
         <html>
             <body>
-                <div class="item">Example</div>
+                <div class="item" data-item-hash="hash001" data-price="19.99">Item</div>
             </body>
         </html>
         """
-        
-        required_selectors = ["div.item", "span.price"]  # span.price doesn't exist
+        config = {'required_selectors': ['.item', '.missing-selector', '.another-missing']}
+        parser = ItemParser(config)
         
         with pytest.raises(ValidationError) as exc_info:
-            validate_html_structure(html, required_selectors)
+            parser.parse(html)
         
-        assert "span.price" in str(exc_info.value)
-        assert "Required CSS selector not found" in str(exc_info.value)
+        error_message = str(exc_info.value)
+        assert 'Missing required selectors' in error_message
 
-    def test_error_handling_invalid_html_empty(self) -> None:
-        """Test error handling with empty HTML."""
+    def test_error_handling_invalid_html_empty(self):
+        """Test that ValidationError is raised for empty HTML.
+        
+        Verifies that empty or minimal HTML without required selectors
+        raises an appropriate ValidationError.
+        """
         html = ""
-        
-        required_selectors = ["div.item"]
+        config = {'required_selectors': ['.item']}
+        parser = ItemParser(config)
         
         with pytest.raises(ValidationError) as exc_info:
-            validate_html_structure(html, required_selectors)
+            parser.parse(html)
         
-        assert "div.item" in str(exc_info.value)
+        assert 'Missing required selectors' in str(exc_info.value)
 
-    def test_error_handling_invalid_price_zero(self) -> None:
-        """Test error handling when price is zero."""
-        with pytest.raises(ValidationError) as exc_info:
-            validate_price(0)
+    def test_error_handling_invalid_price_zero(self):
+        """Test that ValidationError is raised for zero price.
         
-        assert "greater than 0" in str(exc_info.value)
-        assert "0" in str(exc_info.value)
-
-    def test_error_handling_invalid_price_negative(self) -> None:
-        """Test error handling when price is negative."""
-        with pytest.raises(ValidationError) as exc_info:
-            validate_price(-10.5)
-        
-        assert "greater than 0" in str(exc_info.value)
-        assert "-10.5" in str(exc_info.value)
-
-    def test_deduplication_in_full_workflow(self) -> None:
-        """Test deduplication when processing items through full workflow."""
-        # HTML with items that will have duplicates
+        Verifies that items with a price of 0 are rejected with
+        a descriptive error message.
+        """
         html = """
         <html>
             <body>
-                <div class="item">
-                    <span class="name">Magic Potion</span>
-                    <span class="price">15.00</span>
-                </div>
+                <div class="item" data-item-hash="hash001" data-price="0" data-name="Free Item">Free Item</div>
             </body>
         </html>
         """
+        config = {'required_selectors': ['.item']}
+        parser = ItemParser(config)
         
-        # Validate HTML first
-        validate_html_structure(html, ["div.item"])
+        with pytest.raises(ValidationError) as exc_info:
+            parser.parse(html)
         
-        # Simulate items with duplicates (as if parsed from multiple pages)
-        items: List[Dict[str, Any]] = [
-            {"item_hash": "hash001", "name": "Magic Potion", "price": 15.00},
-            {"item_hash": "hash002", "name": "Iron Sword", "price": 25.00},
-            {"item_hash": "hash001", "name": "Magic Potion (duplicate)", "price": 15.00},  # Duplicate
-            {"item_hash": "hash003", "name": "Leather Armor", "price": 35.00},
-            {"item_hash": "hash002", "name": "Iron Sword (duplicate)", "price": 25.00},  # Duplicate
-        ]
-        
-        # Validate all prices
-        for item in items:
-            validate_price(cast(float, item["price"]))
-        
-        # Deduplicate
-        unique_items = deduplicate_items(items)
-        
-        # Should have 3 unique items
-        assert len(unique_items) == 3
-        
-        # First occurrences should be kept
-        assert unique_items[0]["name"] == "Magic Potion"
-        assert unique_items[1]["name"] == "Iron Sword"
-        assert unique_items[2]["name"] == "Leather Armor"
-        
-        # Verify hashes are unique
-        hashes = {item["item_hash"] for item in unique_items}
-        assert len(hashes) == 3
+        assert 'Price must be greater than 0' in str(exc_info.value)
 
-    def test_deduplication_error_missing_item_hash(self) -> None:
-        """Test error handling when item is missing item_hash field."""
-        items = [
-            {"item_hash": "hash001", "name": "Valid Item"},
-            {"name": "Invalid Item - No Hash"},  # Missing item_hash
+    def test_error_handling_invalid_price_negative(self):
+        """Test that ValidationError is raised for negative price.
+        
+        Verifies that items with negative prices are rejected with
+        a descriptive error message.
+        """
+        html = """
+        <html>
+            <body>
+                <div class="item" data-item-hash="hash001" data-price="-10.50" data-name="Negative Item">Negative Item</div>
+            </body>
+        </html>
+        """
+        config = {'required_selectors': ['.item']}
+        parser = ItemParser(config)
+        
+        with pytest.raises(ValidationError) as exc_info:
+            parser.parse(html)
+        
+        assert 'Price must be greater than 0' in str(exc_info.value)
+
+    def test_deduplication_in_full_workflow(self):
+        """Test that duplicates are removed during the full workflow.
+        
+        Verifies that when multiple items have the same item_hash,
+        only the first occurrence is kept in the final result.
+        """
+        html = """
+        <html>
+            <body>
+                <div class="item" data-item-hash="dup001" data-price="10.00" data-name="First">First</div>
+                <div class="item" data-item-hash="dup001" data-price="10.00" data-name="Duplicate 1">Duplicate 1</div>
+                <div class="item" data-item-hash="unique002" data-price="20.00" data-name="Unique">Unique</div>
+                <div class="item" data-item-hash="dup001" data-price="10.00" data-name="Duplicate 2">Duplicate 2</div>
+            </body>
+        </html>
+        """
+        config = {'required_selectors': ['.item']}
+        parser = ItemParser(config)
+        
+        items = parser.parse(html)
+        
+        # Should have 2 items: first dup001 and unique002
+        assert len(items) == 2
+        assert items[0]['item_hash'] == 'dup001'
+        assert items[0]['name'] == 'First'  # First occurrence kept
+        assert items[1]['item_hash'] == 'unique002'
+
+    def test_deduplication_error_missing_item_hash(self):
+        """Test that ValidationError is raised for items without item_hash.
+        
+        Verifies that the deduplication process raises an error when
+        an item is missing the required item_hash field.
+        """
+        items_without_hash = [
+            {'name': 'Item Without Hash', 'price': 10.00}
         ]
         
         with pytest.raises(ValidationError) as exc_info:
-            deduplicate_items(items)
+            deduplicate_items(items_without_hash)
         
-        assert "item_hash" in str(exc_info.value)
-        assert "missing" in str(exc_info.value).lower()
+        assert 'item_hash' in str(exc_info.value).lower()
 
-    def test_complete_workflow_with_edge_cases(self) -> None:
-        """Test complete workflow with various edge cases."""
-        # Complex HTML structure
+    def test_complete_workflow_with_edge_cases(self):
+        """Test complete workflow with various edge cases.
+        
+        Tests a complex scenario with:
+        - Items with special characters in names
+        - Items with decimal prices
+        - Mixed valid and invalid selectors
+        """
         html = """
         <html>
-            <head><title>Item Shop</title></head>
             <body>
-                <div class="shop">
-                    <div class="item" id="item1">
-                        <h2 class="name">Rare Gem</h2>
-                        <span class="price">999.99</span>
-                        <span class="category">Gemstones</span>
-                    </div>
-                    <div class="item" id="item2">
-                        <h2 class="name">Common Stone</h2>
-                        <span class="price">0.01</span>
-                        <span class="category">Rocks</span>
-                    </div>
+                <div class="container">
+                    <div class="item" data-item-hash="edge001" data-price="0.99" data-name="Item A">Item A</div>
+                    <div class="item" data-item-hash="edge002" data-price="9999.99" data-name="Premium Item">Premium Item</div>
+                    <div class="item" data-item-hash="edge003" data-price="1.00" data-name="Budget Item">Budget Item</div>
                 </div>
+                <div class="footer">Footer Content</div>
             </body>
         </html>
         """
+        config = {'required_selectors': ['.container', '.item', '.footer']}
+        parser = ItemParser(config)
         
-        # Step 1: Validate HTML
-        required_selectors = [".shop", ".item", ".name", ".price", ".category"]
-        validate_html_structure(html, required_selectors)
+        items = parser.parse(html)
         
-        # Step 2: Process items
-        items: List[Dict[str, Any]] = [
-            {"item_hash": "gem001", "name": "Rare Gem", "price": 999.99, "category": "Gemstones"},
-            {"item_hash": "stone001", "name": "Common Stone", "price": 0.01, "category": "Rocks"},
-        ]
-        
-        # Step 3: Validate prices (edge case: very small price)
-        for item in items:
-            validate_price(cast(float, item["price"]))
-        
-        # Step 4: Deduplicate (no duplicates in this case)
-        unique_items = deduplicate_items(items)
-        
-        assert len(unique_items) == 2
-        assert unique_items[0]["price"] == 999.99
-        assert unique_items[1]["price"] == 0.01
+        assert len(items) == 3
+        assert items[0]['price'] == 0.99
+        assert items[1]['price'] == 9999.99
+        assert items[2]['price'] == 1.00
 
-    def test_integration_empty_items_list(self) -> None:
-        """Test workflow with empty items list."""
-        result = deduplicate_items([])
+    def test_integration_empty_items_list(self):
+        """Test that empty items list is handled gracefully.
+        
+        Verifies that deduplicate_items handles an empty list correctly.
+        """
+        empty_items = []
+        result = deduplicate_items(empty_items)
+        
         assert result == []
-    
-    def test_integration_multiple_validation_errors(self) -> None:
-        """Test handling multiple validation errors in sequence."""
-        # First error: invalid HTML
-        html = "<html><body></body></html>"
+        assert isinstance(result, list)
+
+    def test_integration_multiple_validation_errors(self):
+        """Test that first validation error is caught and reported.
         
-        with pytest.raises(ValidationError):
-            validate_html_structure(html, [".item"])
+        Verifies that when multiple validation issues exist,
+        the first one encountered is properly reported.
+        """
+        # Test with HTML missing selectors - should catch structure error first
+        html_missing_selectors = """
+        <html>
+            <body>
+                <div class="present">Content</div>
+            </body>
+        </html>
+        """
+        config = {'required_selectors': ['.present', '.absent']}
+        parser = ItemParser(config)
         
-        # After error, system should still work for valid inputs
-        validate_html_structure(
-            "<div class='item'></div>", 
-            [".item"]
-        )
+        with pytest.raises(ValidationError) as exc_info:
+            parser.parse(html_missing_selectors)
         
-        # Price validation
-        validate_price(100.0)
-        
-        with pytest.raises(ValidationError):
-            validate_price(-50.0)
-        
-        # Deduplication
-        items = [{"item_hash": "hash001", "name": "Test"}]
-        result = deduplicate_items(items)
-        assert len(result) == 1
+        # Should report missing selector, not get to price validation
+        assert 'Missing required selectors' in str(exc_info.value)

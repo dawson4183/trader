@@ -1,193 +1,148 @@
-"""CLI entry point for the trader scraper."""
+"""CLI entry point for the trader package.
+
+Provides command-line interface with health check functionality.
+"""
+
 import argparse
+import json
+import os
 import sys
-from typing import List, Optional
+from typing import Dict, Any, Literal
 
-from .item_parser import validate_html_structure, validate_price, deduplicate_items
-from .exceptions import ValidationError
+from trader.health_check import check_database_connection, check_scraper_status, check_recent_failures
 
 
-def run_health_check() -> int:
-    """
-    Run health check to validate environment configuration.
-    
-    Checks:
-    - Python version >= 3.8
-    - beautifulsoup4 is importable
-    - lxml is importable
+def get_db_path() -> str:
+    """Get database path from environment or use default.
     
     Returns:
-        Exit code (0 for healthy, 1 for unhealthy)
+        Database path string, defaults to ':memory:' if not set.
     """
-    errors = []
-    
-    # Check Python version >= 3.8
-    if sys.version_info < (3, 8):
-        major = sys.version_info[0] if isinstance(sys.version_info, tuple) else sys.version_info.major
-        minor = sys.version_info[1] if isinstance(sys.version_info, tuple) else sys.version_info.minor
-        errors.append(f"Python version {major}.{minor} < 3.8")
-    
-    # Check beautifulsoup4 is importable
-    try:
-        import bs4  # noqa: F401
-    except ImportError:
-        errors.append("beautifulsoup4 not importable")
-    
-    # Check lxml is importable
-    try:
-        import lxml  # noqa: F401  # type: ignore[import-untyped]
-    except ImportError:
-        errors.append("lxml not importable")
-    
-    if errors:
-        print(f"unhealthy: {', '.join(errors)}")
-        return 1
-    
-    print("healthy")
+    return os.environ.get("TRADER_DB_PATH", ":memory:")
+
+
+def run_health_checks(db_path: str = ":memory:") -> Dict[str, Any]:
+    """Run all health checks and return consolidated results.
+
+    Args:
+        db_path: Path to the SQLite database file.
+
+    Returns:
+        A dictionary containing:
+            - 'database': Database connection check results
+            - 'scraper': Scraper status check results
+            - 'recent_failures': Recent failures check results
+            - 'overall_status': 'healthy', 'degraded', or 'unhealthy'
+    """
+    # Run individual checks
+    database_result = check_database_connection(db_path)
+    scraper_result = check_scraper_status(db_path)
+    failures_result = check_recent_failures(db_path)
+
+    # Determine overall status
+    overall_status = _determine_overall_status(
+        database_result, scraper_result, failures_result
+    )
+
+    return {
+        "database": database_result,
+        "scraper": scraper_result,
+        "recent_failures": failures_result,
+        "overall_status": overall_status,
+    }
+
+
+def _determine_overall_status(
+    database: Dict[str, Any],
+    scraper: Dict[str, Any],
+    failures: Dict[str, Any],
+) -> Literal["healthy", "degraded", "unhealthy"]:
+    """Determine overall health status from individual check results.
+
+    Status rules:
+        - 'healthy': All checks pass, no warnings
+        - 'degraded': Minor issues (warnings, idle scraper, some failures)
+        - 'unhealthy': Errors (db connection failed, scraper has errors, critical failures)
+
+    Args:
+        database: Database check result
+        scraper: Scraper status check result
+        failures: Recent failures check result
+
+    Returns:
+        Overall status string: 'healthy', 'degraded', or 'unhealthy'
+    """
+    has_error = False
+    has_warning = False
+
+    # Check database status
+    if database.get("status") == "error":
+        has_error = True
+
+    # Check scraper status
+    scraper_status = scraper.get("status")
+    if scraper_status == "error":
+        has_error = True
+    elif scraper_status == "idle":
+        has_warning = True
+
+    # Check for critical failures
+    if failures:
+        critical_count = failures.get("critical_24h", 0)
+        total_count = failures.get("total_24h", 0)
+
+        if critical_count > 0:
+            has_error = True
+        elif total_count > 5:  # More than 5 failures is concerning
+            has_warning = True
+
+    # Determine overall status based on findings
+    if has_error:
+        return "unhealthy"
+    elif has_warning:
+        return "degraded"
+    else:
+        return "healthy"
+
+
+def main(argv: Any = None) -> int:
+    """Main CLI entry point.
+
+    Args:
+        argv: Command-line arguments (defaults to sys.argv[1:])
+
+    Returns:
+        Exit code: 0 for healthy, 1 for degraded/unhealthy
+    """
+    parser = argparse.ArgumentParser(
+        prog="trader",
+        description="Trader CLI - Item parser with health monitoring",
+    )
+
+    parser.add_argument(
+        "--health-check",
+        action="store_true",
+        dest="health_check",
+        help="Run health checks and output JSON status",
+    )
+
+    args = parser.parse_args(args=argv)
+
+    if args.health_check:
+        db_path = get_db_path()
+        results = run_health_checks(db_path)
+        print(json.dumps(results, indent=2))
+
+        # Return appropriate exit code
+        if results["overall_status"] == "healthy":
+            return 0
+        else:
+            return 1
+
+    # No arguments provided - print help
+    parser.print_help()
     return 0
 
 
-def scrape_command(args: argparse.Namespace) -> int:
-    """
-    Run the scraper to parse items from HTML.
-    
-    Args:
-        args: Command line arguments
-        
-    Returns:
-        Exit code (0 for success, non-zero for error)
-    """
-    try:
-        # If HTML file is provided, validate it
-        if args.html_file:
-            # Validate selectors are provided first
-            if not args.selectors:
-                print("Error: --selectors required when using --html-file")
-                return 1
-            
-            with open(args.html_file, 'r', encoding='utf-8') as f:
-                html = f.read()
-            
-            # Validate HTML structure with provided selectors
-            selectors_list = [s.strip() for s in args.selectors.split(',')]
-            validate_html_structure(html, selectors_list)
-            print(f"HTML validation passed for {len(selectors_list)} selector(s)")
-        else:
-            # Default scraper behavior
-            print("Scraper running...")
-            
-        return 0
-    except ValidationError as e:
-        print(f"Validation error: {e}")
-        return 1
-    except FileNotFoundError as e:
-        print(f"File not found: {e}")
-        return 1
-    except Exception as e:
-        print(f"Error: {e}")
-        return 1
-
-
-def health_check_command(args: argparse.Namespace) -> int:
-    """
-    Run health check to verify the CLI is working.
-    
-    Args:
-        args: Command line arguments
-        
-    Returns:
-        Exit code (0 for healthy, non-zero for unhealthy)
-    """
-    try:
-        # Basic health check - verify imports work
-        _ = validate_html_structure
-        _ = validate_price
-        _ = deduplicate_items
-        print("Health check: OK")
-        return 0
-    except Exception as e:
-        print(f"Health check failed: {e}")
-        return 1
-
-
-def create_parser() -> argparse.ArgumentParser:
-    """
-    Create the argument parser for the CLI.
-    
-    Returns:
-        Configured ArgumentParser instance
-    """
-    parser = argparse.ArgumentParser(
-        prog='trader',
-        description='CLI for the D2IA bot scraper'
-    )
-    
-    parser.add_argument(
-        '--health-check',
-        action='store_true',
-        help='Run health check to validate environment configuration'
-    )
-    
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
-    
-    # Scrape command (default)
-    scrape_parser = subparsers.add_parser(
-        'scrape',
-        help='Run the item scraper'
-    )
-    scrape_parser.add_argument(
-        '--html-file',
-        type=str,
-        help='Path to HTML file to parse'
-    )
-    scrape_parser.add_argument(
-        '--selectors',
-        type=str,
-        help='CSS selectors as comma-separated list (e.g., ".title,.cost")'
-    )
-    scrape_parser.set_defaults(func=scrape_command)
-    
-    # Health check command
-    health_parser = subparsers.add_parser(
-        'health',
-        help='Run health check'
-    )
-    health_parser.add_argument(
-        '--health-check',
-        action='store_true',
-        dest='health_check_flag',
-        help='Flag to indicate health check mode'
-    )
-    health_parser.set_defaults(func=health_check_command)
-    
-    return parser
-
-
-def main(argv: Optional[List[str]] = None) -> int:
-    """
-    Main entry point for the CLI.
-    
-    Args:
-        argv: Command line arguments (defaults to sys.argv[1:])
-        
-    Returns:
-        Exit code (0 for success, non-zero for error)
-    """
-    parser = create_parser()
-    args = parser.parse_args(argv)
-    
-    # Handle --health-check flag first (takes priority)
-    if args.health_check:
-        return run_health_check()
-    
-    if args.command is None:
-        # Default to scrape command if no subcommand specified
-        result: int = scrape_command(argparse.Namespace(html_file=None, selectors=None))
-        return result
-    
-    result = args.func(args)
-    return int(result)
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

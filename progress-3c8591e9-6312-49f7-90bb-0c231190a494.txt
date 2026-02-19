@@ -3,104 +3,256 @@
 
 ## Stories Completed
 
+### Story 1.0: Create database module with connection management
+- Status: COMPLETED (completed before this session)
+- Files: trader/database.py, tests/test_database.py
+
 ### Story 2.0: Create database schema for health tracking
+- Status: COMPLETED (completed before this session)
+- Files: trader/schema.py, tests/test_schema.py
+
+### Story 3.0: Create scraper module with status tracking
 - Status: COMPLETED
-- Commit: feat: 2.0 - Create database schema for health tracking
+- Commit: feat: 3.0 - Create scraper module with status tracking
 - Files Added:
-  - trader/schema.py: Schema management with create_tables(), drop_tables(), table_exists(), get_table_schema()
-  - tests/test_schema.py: Comprehensive tests for schema functionality
-- Files Modified:
-  - trader/database.py: Added PRAGMA query support for schema inspection
+  - trader/scraper.py: Scraper class with status tracking
+  - tests/test_scraper.py: Comprehensive tests for scraper functionality
 
 ## Implementation Summary
 
-### Schema Features:
-1. `create_tables()` - Idempotent function to create all schema tables
-2. `drop_tables()` - Function to drop all schema tables
-3. `table_exists()` - Check if a specific table exists
-4. `get_table_schema()` - Get column information for a table
+### Scraper Module (trader/scraper.py):
 
-### Tables Created:
+**Class: Scraper**
 
-#### scraper_runs
-- id: INTEGER PRIMARY KEY AUTOINCREMENT
-- started_at: TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-- ended_at: TIMESTAMP (nullable)
-- status: TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed'))
-- items_count: INTEGER DEFAULT 0
+1. **Initialization**
+   - Constructor accepts optional DatabaseConnection or creates new one
+   - Ensures tables exist via create_tables()
+   - Maintains current_run_id state
 
-#### scraper_failures
-- id: INTEGER PRIMARY KEY AUTOINCREMENT
-- run_id: INTEGER NOT NULL (foreign key to scraper_runs.id)
-- error_message: TEXT NOT NULL
-- level: TEXT NOT NULL CHECK(level IN ('warning', 'error', 'critical'))
-- occurred_at: TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-- Foreign key constraint with ON DELETE CASCADE
+2. **start_run()**
+   - Creates entry in scraper_runs table with 'running' status
+   - Raises RuntimeError if run already in progress
+   - Returns the ID of the created run record
 
-#### health_checks
-- id: INTEGER PRIMARY KEY AUTOINCREMENT
-- check_type: TEXT NOT NULL
-- status: TEXT NOT NULL CHECK(status IN ('healthy', 'unhealthy'))
-- details: TEXT (nullable)
-- checked_at: TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+3. **end_run(status, items_count)**
+   - Updates run record with completion status ('completed' or 'failed')
+   - Records items_count and ended_at timestamp
+   - Raises RuntimeError if no run active
+   - Raises ValueError if 'running' status provided
 
-### Indexes Created:
-- idx_scraper_runs_status
-- idx_scraper_runs_started_at
-- idx_scraper_failures_run_id
-- idx_scraper_failures_occurred_at
-- idx_health_checks_type
-- idx_health_checks_checked_at
+4. **record_failure(error_message, level)**
+   - Inserts record into scraper_failures table
+   - Creates failed run if no active run exists
+   - Supports levels: 'warning', 'error', 'critical'
+   - Returns failure record ID
 
-### Test Coverage (29 tests in test_schema.py):
-- TestCreateTables: 11 tests (table creation, idempotency, columns, foreign keys, indexes)
-- TestDropTables: 2 tests (drop all, safe on empty)
-- TestTableExists: 2 tests (exists true/false)
-- TestGetTableSchema: 2 tests (returns columns, empty for nonexistent)
-- TestDataOperations: 10 tests (inserts, constraints, foreign keys, cascade delete)
-- TestIntegrationWithContextManager: 2 tests (context manager usage)
+5. **get_status()**
+   - Returns 'idle': no active runs and no recent errors
+   - Returns 'running': active run in progress
+   - Returns 'error': recent failures or last run failed
+   - Detects orphaned runs in database (crash recovery)
+
+6. **get_current_run_id()**
+   - Returns ID of active run or None
+
+7. **get_run_history(limit)**
+   - Returns list of run records
+   - Orders by started_at DESC
+
+8. **get_recent_failures(limit)**
+   - Returns list of failure records
+   - Orders by occurred_at DESC
+
+### Test Coverage (39 tests in tests/test_scraper.py):
+
+**TestScraperClass: 3 tests**
+- test_scraper_class_exists
+- test_scraper_init_with_default_db
+- test_scraper_init_with_custom_db
+- test_scraper_creates_tables_on_init
+
+**TestStartRun: 4 tests**
+- test_start_run_creates_entry
+- test_start_run_sets_current_run_id
+- test_start_run_raises_when_run_in_progress
+- test_start_run_returns_unique_ids
+
+**TestEndRun: 7 tests**
+- test_end_run_updates_status
+- test_end_run_updates_items_count
+- test_end_run_sets_ended_at
+- test_end_run_clears_current_run_id
+- test_end_run_accepts_failed_status
+- test_end_run_raises_when_no_run_active
+- test_end_run_rejects_running_status
+
+**TestRecordFailure: 4 tests**
+- test_record_failure_inserts_into_table
+- test_record_failure_accepts_warning_level
+- test_record_failure_accepts_critical_level
+- test_record_failure_creates_run_if_none_active
+
+**TestGetStatus: 6 tests**
+- test_get_status_returns_idle_initially
+- test_get_status_returns_running_after_start
+- test_get_status_returns_idle_after_completed_run
+- test_get_status_returns_error_after_failed_run
+- test_get_status_returns_error_with_recent_failures
+- test_get_status_detects_running_in_database
+
+**TestGetCurrentRunId: 3 tests**
+- test_get_current_run_id_returns_none_initially
+- test_get_current_run_id_returns_id_during_run
+- test_get_current_run_id_returns_none_after_end
+
+**TestGetRunHistory: 4 tests**
+- test_get_run_history_returns_list
+- test_get_run_history_returns_runs
+- test_get_run_history_respects_limit
+- test_get_run_history_orders_by_started_at_desc
+
+**TestGetRecentFailures: 4 tests**
+- test_get_recent_failures_returns_list
+- test_get_recent_failures_returns_failures
+- test_get_recent_failures_respects_limit
+- test_get_recent_failures_orders_by_occurred_at_desc
+
+**TestIntegration: 3 tests**
+- test_full_scraper_workflow
+- test_multiple_runs
+- test_scraper_with_context_manager_db
 
 ## Codebase Patterns
 
-### Schema Pattern:
+### Scraper Initialization Pattern:
 ```python
-def create_tables(db: Optional[DatabaseConnection] = None) -> None:
-    if db is None:
-        db = DatabaseConnection()
-    
-    # Create tables with IF NOT EXISTS (idempotent)
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS table_name (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ...
-        )
-    """)
-    
-    # Create indexes
-    db.execute("CREATE INDEX IF NOT EXISTS idx_name ON table_name(column)")
+from trader.scraper import Scraper
+from trader.database import DatabaseConnection
+
+# With default in-memory database
+scraper = Scraper()
+
+# With custom database connection
+with DatabaseConnection() as db:
+    scraper = Scraper(db)
 ```
 
-### CHECK Constraint Pattern:
-```sql
-status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed'))
-```
-
-### Foreign Key Pattern:
-```sql
-run_id INTEGER NOT NULL,
-FOREIGN KEY (run_id) REFERENCES scraper_runs(id) ON DELETE CASCADE
-```
-
-### PRAGMA Query Pattern (for schema inspection):
+### Scraper Run Lifecycle Pattern:
 ```python
-# PRAGMA queries return results like SELECT
-schema = db.execute(f"PRAGMA table_info({table_name})")
-fk_info = db.execute("PRAGMA foreign_key_list(scraper_failures)")
+scraper = Scraper()
+
+try:
+    run_id = scraper.start_run()
+    # ... do scraping work ...
+    items_count = 100
+    scraper.end_run("completed", items_count)
+except Exception as e:
+    scraper.record_failure(str(e), "error")
+    scraper.end_run("failed")
 ```
+
+### Status Checking Pattern:
+```python
+status = scraper.get_status()  # Returns: "idle" | "running" | "error"
+
+if status == "running":
+    run_id = scraper.get_current_run_id()
+    print(f"Run {run_id} is in progress")
+elif status == "error":
+    failures = scraper.get_recent_failures(limit=5)
+    for failure in failures:
+        print(f"  {failure['level']}: {failure['error_message']}")
+```
+
+## Type Annotations
+
+The module uses strong typing:
+- `StatusType = Literal["idle", "running", "error"]`
+- `RunStatusType = Literal["running", "completed", "failed"]`
+- `FailureLevelType = Literal["warning", "error", "critical"]`
 
 ## Test Results
-- All 29 schema tests pass
-- Typecheck passes (mypy)
+- All 39 scraper tests pass
+- mypy typecheck passes for trader/scraper.py, trader/schema.py, trader/database.py
+- All 115 tests in test suite pass
+
+## Codebase Patterns Added/Updated
+
+### Pattern: Status Tracking Scraper
+- Create entry in runs table on start
+- Update entry on completion/failure
+- Record failures with severity levels
+- Provide status query methods
+
+### Story 6.0: Add check_recent_failures() to health_check.py
+- Status: COMPLETED
+- Commit: feat: 6.0 - Add check_recent_failures() to health_check.py
+- Files Modified:
+  - trader/health_check.py: Added check_recent_failures() function
+  - tests/test_health_check.py: Added tests for check_recent_failures()
+
+**Function: check_recent_failures(db_path)**
+- Returns dict with 'total_24h', 'critical_24h', 'warning_24h', 'top_errors'
+- Queries scraper_failures table for failures in last 24 hours
+- Groups errors by first 50 characters of message (SUBSTR function)
+- 'top_errors' is list of {message, count}, limited to top 5 most frequent
+- Returns empty dict {} if no failures in database
+- Counts only failures with occurred_at >= now - 24 hours
+
+**Query Logic:**
+- Calculate cutoff time as datetime.now(timezone.utc) - timedelta(hours=24)
+- Format as 'YYYY-MM-DD HH:MM:SS' for SQLite comparison
+- Total count: COUNT(*) WHERE occurred_at >= cutoff
+- Critical count: COUNT(*) WHERE occurred_at >= cutoff AND level = 'critical'
+- Warning count: COUNT(*) WHERE occurred_at >= cutoff AND level = 'warning'
+- Top errors: GROUP BY SUBSTR(error_message, 1, 50), ORDER BY count DESC, LIMIT 5
+
+**Test Coverage (13 tests):**
+- test_function_exists
+- test_returns_dict
+- test_returns_empty_dict_when_no_failures
+- test_returns_total_24h_key
+- test_returns_critical_24h_key
+- test_returns_warning_24h_key
+- test_returns_top_errors_key
+- test_counts_failures_in_last_24_hours
+- test_counts_failures_by_level
+- test_groups_errors_by_first_50_chars
+- test_limits_top_errors_to_5
+- test_top_errors_sorted_by_count_desc
+- test_top_errors_item_structure
+
+**Test Results:**
+- All 39 health check tests pass
+- mypy typecheck passes
+- All 154 tests in test suite pass
+
+**Codebase Patterns Added:**
+
+### Pattern: Recent Failures Health Check
+```python
+from trader.health_check import check_recent_failures
+
+# Check recent failures
+result = check_recent_failures()
+# Returns: {
+#   'total_24h': 10,
+#   'critical_24h': 2,
+#   'warning_24h': 3,
+#   'top_errors': [
+#     {'message': 'Connection timeout', 'count': 5},
+#     {'message': 'Rate limit exceeded', 'count': 3}
+#   ]
+# }
+# Or if no failures: {}
+```
+
+**Guidelines:**
+- Query scraper_failures table with WHERE occurred_at >= cutoff
+- Use SUBSTR(error_message, 1, 50) for grouping
+- Limit top errors to 5 with ORDER BY count DESC
+- Return empty dict if total_24h == 0
+- Use timezone.utc for consistent time calculations
 
 ## Stories Remaining
-- Story 3.0-11.0: Additional stories for health checks and alerts
+- Story 7.0: Integrate health check CLI flag

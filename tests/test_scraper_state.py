@@ -1,510 +1,418 @@
-"""Tests for ScraperState class.
-
-Tests for state persistence to JSON file with atomic write capability.
-"""
-
+"""Tests for ScraperState persistence functionality."""
 import json
 import os
-import shutil
-import stat
+import time
 import tempfile
-import unittest
-from datetime import datetime, timezone
+import atexit
 from pathlib import Path
-from unittest.mock import patch
-
+from unittest.mock import Mock, patch, MagicMock
 import pytest
 
-from trader.scraper import ScraperState
+from trader.error_handling import ScraperState, CircuitState
 
 
-class TestScraperStateBasics:
+class TestScraperStateBasic:
     """Test basic ScraperState functionality."""
 
-    def test_scraper_state_instantiates_with_defaults(self, tmp_path):
-        """ScraperState should instantiate with default file path."""
-        state = ScraperState.__new__(ScraperState)
-        state._initialized = False
-        
-        with patch.object(Path, 'home', return_value=tmp_path):
-            state.__init__()
-            assert isinstance(state.state_file, Path)
-            assert str(state.state_file) == str(tmp_path / ".trader" / "scraper_state.json")
+    def test_default_state_file_path(self):
+        """Should use ~/.trader/scraper_state.json as default."""
+        state = ScraperState()
+        expected = Path.home() / ".trader" / "scraper_state.json"
+        assert state.state_file == expected
 
-    def test_scraper_state_accepts_custom_file(self, tmp_path):
-        """ScraperState should accept custom state file path."""
-        custom_file = tmp_path / "custom_state.json"
-        
-        # Reset singleton
-        ScraperState._instance = None
-        state = ScraperState.__new__(ScraperState)
-        state._initialized = False
-        state.__init__(str(custom_file))
-        
-        assert state.state_file == custom_file
+    def test_custom_state_file_path(self):
+        """Should accept custom state file path."""
+        custom_path = Path("/tmp/custom_state.json")
+        state = ScraperState(state_file=custom_path)
+        assert state.state_file == custom_path
 
-    def test_creates_state_directory(self, tmp_path):
-        """ScraperState should create state directory if it doesn't exist."""
-        state_dir = tmp_path / "nonexistent" / "trader"
-        state_file = state_dir / "state.json"
-        
-        # Reset singleton
-        ScraperState._instance = None
-        state = ScraperState.__new__(ScraperState)
-        state._initialized = False
-        state.__init__(str(state_file))
-        
-        assert state_dir.exists()
+    def test_default_initial_values(self):
+        """Should have correct default initial values."""
+        state = ScraperState()
+        assert state.circuit_state == CircuitState.CLOSED
+        assert state.failure_count == 0
+        assert state.last_failure_time is None
+        assert state.pending_urls == []
+        assert state.completed_urls == []
+
+    def test_custom_initial_values(self):
+        """Should accept custom initial values."""
+        state = ScraperState(
+            circuit_state=CircuitState.OPEN,
+            failure_count=5,
+            last_failure_time=1234567890.0,
+            pending_urls=["http://example.com/1"],
+            completed_urls=["http://example.com/2"]
+        )
+        assert state.circuit_state == CircuitState.OPEN
+        assert state.failure_count == 5
+        assert state.last_failure_time == 1234567890.0
+        assert state.pending_urls == ["http://example.com/1"]
+        assert state.completed_urls == ["http://example.com/2"]
 
 
 class TestScraperStateSave:
-    """Test ScraperState.save_state() method."""
+    """Test ScraperState save_state functionality."""
 
-    def setup_method(self):
-        """Set up test fixtures."""
-        # Reset singleton for each test
-        ScraperState._instance = None
-        self.temp_dir = Path(tempfile.mkdtemp())
-        self.state_file = self.temp_dir / "scraper_state.json"
+    def test_save_state_creates_file(self, tmp_path):
+        """Should create state file on save_state() call."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(state_file=state_file)
+        
+        state.save_state()
+        
+        assert state_file.exists()
 
-    def teardown_method(self):
-        """Clean up after tests."""
-        # Reset singleton
-        ScraperState._instance = None
-        if self.temp_dir.exists():
-            shutil.rmtree(self.temp_dir)
+    def test_save_state_creates_directory(self, tmp_path):
+        """Should create parent directories if they don't exist."""
+        state_file = tmp_path / "subdir" / "nested" / "state.json"
+        state = ScraperState(state_file=state_file)
+        
+        state.save_state()
+        
+        assert state_file.exists()
 
-    def test_save_state_creates_file(self):
-        """save_state should create state file."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
-        
-        result = state.save_state()
-        
-        assert result.exists()
-        assert self.state_file.exists()
-
-    def test_save_state_includes_all_required_fields(self):
-        """save_state should include all required state fields."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
-        
-        state.save_state(
-            circuit_state="open",
-            failure_count=5,
-            last_failure_time="2024-01-01T00:00:00",
-            pending_urls=["http://example.com"],
-            completed_urls=["http://test.com"]
-        )
-        
-        with open(self.state_file, 'r') as f:
-            saved_data = json.load(f)
-        
-        assert "circuit_state" in saved_data
-        assert "failure_count" in saved_data
-        assert "last_failure_time" in saved_data
-        assert "pending_urls" in saved_data
-        assert "completed_urls" in saved_data
-        assert "timestamp" in saved_data
-
-    def test_save_state_saves_correct_values(self):
-        """save_state should save the values passed to it."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
-        
-        state.save_state(
-            circuit_state="half_open",
+    def test_save_state_contains_expected_fields(self, tmp_path):
+        """Saved state should contain all expected fields."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(
+            state_file=state_file,
+            circuit_state=CircuitState.OPEN,
             failure_count=10,
-            last_failure_time="2024-06-15T12:30:45",
-            pending_urls=["https://site1.com", "https://site2.com"],
-            completed_urls=["https://done1.com"]
+            last_failure_time=1234567890.0,
+            pending_urls=["http://example.com/pending1", "http://example.com/pending2"],
+            completed_urls=["http://example.com/done1"]
         )
         
-        with open(self.state_file, 'r') as f:
-            saved_data = json.load(f)
-        
-        assert saved_data["circuit_state"] == "half_open"
-        assert saved_data["failure_count"] == 10
-        assert saved_data["last_failure_time"] == "2024-06-15T12:30:45"
-        assert saved_data["pending_urls"] == ["https://site1.com", "https://site2.com"]
-        assert saved_data["completed_urls"] == ["https://done1.com"]
-
-    def test_save_state_default_values(self):
-        """save_state should use default values when not provided."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
-        
         state.save_state()
         
-        with open(self.state_file, 'r') as f:
-            saved_data = json.load(f)
+        with open(state_file, 'r') as f:
+            saved = json.load(f)
         
-        assert saved_data["circuit_state"] == "closed"
-        assert saved_data["failure_count"] == 0
-        assert saved_data["last_failure_time"] is None
-        assert saved_data["pending_urls"] == []
-        assert saved_data["completed_urls"] == []
+        assert saved["circuit_state"] == "OPEN"
+        assert saved["failure_count"] == 10
+        assert saved["last_failure_time"] == 1234567890.0
+        assert saved["pending_urls"] == ["http://example.com/pending1", "http://example.com/pending2"]
+        assert saved["completed_urls"] == ["http://example.com/done1"]
+        assert "timestamp" in saved
+        assert isinstance(saved["timestamp"], float)
 
-    def test_save_state_returns_file_path(self):
-        """save_state should return the file path."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
+    def test_save_state_timestamp_is_current(self, tmp_path):
+        """Saved state should have current timestamp."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(state_file=state_file)
         
-        result = state.save_state()
-        
-        assert isinstance(result, Path)
-        assert str(result) == str(self.state_file)
-
-    def test_save_state_updates_timestamp(self):
-        """save_state should include current timestamp."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
-        
-        from datetime import datetime
-        before_save = datetime.now(timezone.utc).isoformat()[:19]
-        
+        before = time.time()
         state.save_state()
+        after = time.time()
         
-        with open(self.state_file, 'r') as f:
-            saved_data = json.load(f)
+        with open(state_file, 'r') as f:
+            saved = json.load(f)
         
-        assert "timestamp" in saved_data
-        # Verify timestamp is valid ISO format
-        datetime.fromisoformat(saved_data["timestamp"])
+        assert before <= saved["timestamp"] <= after
 
 
 class TestScraperStateLoad:
-    """Test ScraperState.load_state() method."""
+    """Test ScraperState load functionality."""
 
-    def setup_method(self):
-        """Set up test fixtures."""
-        ScraperState._instance = None
-        self.temp_dir = Path(tempfile.mkdtemp())
-        self.state_file = self.temp_dir / "scraper_state.json"
-
-    def teardown_method(self):
-        """Clean up."""
-        ScraperState._instance = None
-        if self.temp_dir.exists():
-            shutil.rmtree(self.temp_dir)
-
-    def test_load_state_returns_dict(self):
-        """load_state should return a dictionary."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
+    def test_load_state_returns_dict(self, tmp_path):
+        """Should return state as dictionary."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(
+            state_file=state_file,
+            circuit_state=CircuitState.OPEN,
+            failure_count=5,
+            pending_urls=["http://example.com"]
+        )
         state.save_state()
         
-        result = state.load_state()
+        loaded = state.load_state()
         
-        assert isinstance(result, dict)
+        assert isinstance(loaded, dict)
+        assert loaded["circuit_state"] == "OPEN"
+        assert loaded["failure_count"] == 5
+        assert loaded["pending_urls"] == ["http://example.com"]
 
-    def test_load_state_contains_expected_fields(self):
-        """load_state should return dict with expected fields."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
-        state.save_state(
-            circuit_state="open",
+    def test_load_and_restore_restores_attributes(self, tmp_path):
+        """Should restore instance attributes from file."""
+        state_file = tmp_path / "state.json"
+        
+        # Create and save state
+        state1 = ScraperState(
+            state_file=state_file,
+            circuit_state=CircuitState.HALF_OPEN,
             failure_count=7,
-            last_failure_time="2024-01-15T10:00:00",
-            pending_urls=["http://pending.com"],
-            completed_urls=["http://completed.com"]
-        )
-        
-        result = state.load_state()
-        
-        assert "circuit_state" in result
-        assert "failure_count" in result
-        assert "last_failure_time" in result
-        assert "pending_urls" in result
-        assert "completed_urls" in result
-        assert "timestamp" in result
-
-    def test_load_state_returns_saved_values(self):
-        """load_state should return the values that were saved."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
-        state.save_state(
-            circuit_state="open",
-            failure_count=5,
+            last_failure_time=9876543210.0,
             pending_urls=["url1", "url2"],
             completed_urls=["url3"]
         )
+        state1.save_state()
         
-        result = state.load_state()
+        # Create new instance and restore
+        state2 = ScraperState(state_file=state_file)
+        state2.load_and_restore()
         
-        assert result["circuit_state"] == "open"
-        assert result["failure_count"] == 5
-        assert result["pending_urls"] == ["url1", "url2"]
-        assert result["completed_urls"] == ["url3"]
+        assert state2.circuit_state == CircuitState.HALF_OPEN
+        assert state2.failure_count == 7
+        assert state2.last_failure_time == 9876543210.0
+        assert state2.pending_urls == ["url1", "url2"]
+        assert state2.completed_urls == ["url3"]
 
-    def test_load_state_raises_file_not_found(self):
-        """load_state should raise FileNotFoundError if file doesn't exist."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
+    def test_load_state_file_not_found(self, tmp_path):
+        """Should raise FileNotFoundError if file doesn't exist."""
+        state_file = tmp_path / "nonexistent.json"
+        state = ScraperState(state_file=state_file)
         
         with pytest.raises(FileNotFoundError):
             state.load_state()
 
-    def test_load_state_handles_corrupted_json(self):
-        """load_state should raise JSONDecodeError for corrupted file."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
-        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+    def test_load_state_corrupted_json(self, tmp_path):
+        """Should raise JSONDecodeError for corrupted file."""
+        state_file = tmp_path / "corrupted.json"
+        state_file.write_text("not valid json{")
         
-        with open(self.state_file, 'w') as f:
-            f.write("{ invalid json")
+        state = ScraperState(state_file=state_file)
         
         with pytest.raises(json.JSONDecodeError):
             state.load_state()
+
+    def test_state_exists_false_when_no_file(self, tmp_path):
+        """state_exists() should return False when file doesn't exist."""
+        state_file = tmp_path / "nonexistent.json"
+        state = ScraperState(state_file=state_file)
+        
+        assert state.state_exists() is False
+
+    def test_state_exists_true_when_file_exists(self, tmp_path):
+        """state_exists() should return True when file exists."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(state_file=state_file)
+        state.save_state()
+        
+        assert state.state_exists() is True
 
 
 class TestScraperStateAtomicWrite:
     """Test atomic write functionality."""
 
-    def setup_method(self):
-        """Set up test fixtures."""
-        ScraperState._instance = None
-        self.temp_dir = Path(tempfile.mkdtemp())
-        self.state_file = self.temp_dir / "scraper_state.json"
-
-    def teardown_method(self):
-        """Clean up."""
-        ScraperState._instance = None
-        if self.temp_dir.exists():
-            shutil.rmtree(self.temp_dir)
-
-    def test_atomic_write_uses_temp_file(self):
-        """save_state should use temporary file during write."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
+    def test_atomic_write_uses_temp_file(self, tmp_path):
+        """Should write to temp file before renaming."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(state_file=state_file)
         
-        temp_file = self.state_file.with_suffix('.tmp')
-        
-        # Check that temp file doesn't exist after successful write
-        state.save_state()
-        
-        assert not temp_file.exists()
-        assert self.state_file.exists()
+        with patch('tempfile.NamedTemporaryFile') as mock_temp:
+            mock_file = MagicMock()
+            mock_file.name = str(tmp_path / "temp.tmp")
+            mock_temp.return_value = mock_file
+            
+            try:
+                state.save_state()
+            except:
+                pass  # We mocked the temp file
+            
+            mock_temp.assert_called_once()
+            assert mock_temp.call_args[1]['dir'] == state_file.parent
 
-    def test_atomic_write_renames_on_success(self):
-        """save_state should rename temp file to final on success."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
+    def test_atomic_write_renames_on_success(self, tmp_path):
+        """Should rename temp file to final name on success."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(state_file=state_file)
         
         state.save_state()
         
-        assert self.state_file.exists()
-        
-        # Verify content
-        with open(self.state_file, 'r') as f:
-            data = json.load(f)
-            assert "circuit_state" in data
+        assert state_file.exists()
+        # Should be valid JSON
+        with open(state_file, 'r') as f:
+            json.load(f)
 
     def test_atomic_write_cleans_up_temp_on_failure(self, tmp_path):
-        """save_state should clean up temp file on failure."""
-        # Create a temp file that will be used
-        temp_file = tmp_path / "state.json.tmp"
-        
-        # Create a ScraperState and manually trigger temp file creation then failure
+        """Should clean up temp file if write fails."""
         state_file = tmp_path / "state.json"
-        ScraperState._instance = None
-        state = ScraperState(str(state_file))
+        state = ScraperState(state_file=state_file)
         
-        # Test that save_state handles failures properly by using a restricted directory
-        # This is a simplified test - we verify the atomic write mechanism works
-        # as intended (temp file is used, then renamed)
-        assert state.save_state() == state_file
-        assert not (tmp_path / "state.json.tmp").exists()
-        assert (tmp_path / "state.json").exists()
-
-    def test_no_corruption_on_parallel_writes(self):
-        """Multiple parallel writes should not corrupt the file."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
+        # Make json.dump raise an exception
+        with patch('json.dump', side_effect=IOError("write failed")):
+            with pytest.raises(IOError):
+                state.save_state()
         
-        # Simulate multiple writes
-        for i in range(3):
-            state.save_state(
-                circuit_state="open",
-                failure_count=i,
-                pending_urls=[f"url{i}"]
-            )
-            
-            # Verify file is valid JSON after each write
-            with open(self.state_file, 'r') as f:
-                data = json.load(f)
-                assert "circuit_state" in data
-                assert "failure_count" in data
+        # Check no temp files left behind in parent dir
+        temp_files = list(state_file.parent.glob("scraper_state_*.tmp"))
+        assert len(temp_files) == 0
 
-
-class TestScraperStateClear:
-    """Test clear_state method."""
-
-    def setup_method(self):
-        """Set up test fixtures."""
-        ScraperState._instance = None
-        self.temp_dir = Path(tempfile.mkdtemp())
-        self.state_file = self.temp_dir / "scraper_state.json"
-
-    def teardown_method(self):
-        """Clean up."""
-        ScraperState._instance = None
-        if self.temp_dir.exists():
-            shutil.rmtree(self.temp_dir)
-
-    def test_clear_state_removes_file(self):
-        """clear_state should remove the state file."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
-        state.save_state()
+    def test_atomic_write_not_corrupted_by_crash(self, tmp_path):
+        """Original file should remain intact if crash during write."""
+        state_file = tmp_path / "state.json"
         
-        assert self.state_file.exists()
+        # First save some valid state
+        state1 = ScraperState(
+            state_file=state_file,
+            circuit_state=CircuitState.OPEN,
+            failure_count=5
+        )
+        state1.save_state()
         
-        state.clear_state()
+        # Verify we can load it
+        loaded1 = state1.load_state()
+        assert loaded1["circuit_state"] == "OPEN"
+        assert loaded1["failure_count"] == 5
         
-        assert not self.state_file.exists()
-
-    def test_clear_state_handles_missing_file(self):
-        """clear_state should handle missing file gracefully."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
+        # Simulate a crash during second save by mocking os.rename to fail
+        state2 = ScraperState(
+            state_file=state_file,
+            circuit_state=CircuitState.CLOSED,
+            failure_count=0
+        )
         
-        # Should not raise
-        state.clear_state()
-        assert not self.state_file.exists()
-
-
-class TestScraperStateClassMethod:
-    """Test class method ScraperState.load_state_from_file."""
-
-    def setup_method(self):
-        """Set up test fixtures."""
-        ScraperState._instance = None
-        self.temp_dir = Path(tempfile.mkdtemp())
-        self.state_file = self.temp_dir / "scraper_state.json"
-
-    def teardown_method(self):
-        """Clean up."""
-        ScraperState._instance = None
-        if self.temp_dir.exists():
-            shutil.rmtree(self.temp_dir)
-
-    def test_load_state_from_file_returns_dict(self):
-        """load_state_from_file should return dict."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
-        state.save_state(circuit_state="open", failure_count=3)
+        with patch('os.rename', side_effect=IOError("crash during rename")):
+            with pytest.raises(IOError):
+                state2.save_state()
         
-        # Reset singleton
-        ScraperState._instance = None
-        
-        result = ScraperState.load_state_from_file(str(self.state_file))
-        
-        assert isinstance(result, dict)
-        assert result["circuit_state"] == "open"
-        assert result["failure_count"] == 3
-
-    def test_load_state_from_file_raises_on_missing(self):
-        """load_state_from_file should raise FileNotFoundError if file missing."""
-        ScraperState._instance = None
-        
-        with pytest.raises(FileNotFoundError):
-            ScraperState.load_state_from_file(str(self.state_file))
+        # Original file should still be intact and loadable
+        loaded2 = state1.load_state()
+        assert loaded2["circuit_state"] == "OPEN"  # Not the new value
+        assert loaded2["failure_count"] == 5  # Not the new value
 
 
 class TestScraperStateAtexit:
     """Test atexit handler functionality."""
 
-    def setup_method(self):
-        """Set up test fixtures."""
-        ScraperState._instance = None
-        self.temp_dir = Path(tempfile.mkdtemp())
-        self.state_file = self.temp_dir / "scraper_state.json"
-
-    def teardown_method(self):
-        """Clean up."""
-        ScraperState._instance = None
-        if self.temp_dir.exists():
-            shutil.rmtree(self.temp_dir)
-
-    def test_atexit_handler_registered(self):
-        """ScraperState should register atexit handler on init."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
+    def test_atexit_handler_registers(self, tmp_path):
+        """Should register with atexit when register_atexit_handler called."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(state_file=state_file)
         
-        # Just verify initialization doesn't error
-        assert state._initialized is True
+        with patch('atexit.register') as mock_register:
+            state.register_atexit_handler()
+            mock_register.assert_called_once_with(state._atexit_save)
 
-    def test_cleanup_on_exit_saves_state(self):
-        """_cleanup_on_exit should save current state."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
-        state.circuit_state = "half_open"
-        state.failure_count = 5
-        state.pending_urls = ["http://example.com"]
+    def test_atexit_handler_only_registers_once(self, tmp_path):
+        """Should only register atexit handler once."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(state_file=state_file)
         
-        state._cleanup_on_exit()
+        with patch('atexit.register') as mock_register:
+            state.register_atexit_handler()
+            state.register_atexit_handler()
+            state.register_atexit_handler()
+            mock_register.assert_called_once()
+
+    def test_atexit_save_saves_state(self, tmp_path):
+        """_atexit_save should call save_state."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(
+            state_file=state_file,
+            failure_count=5  # Has data worth saving
+        )
         
-        assert self.state_file.exists()
+        with patch.object(state, 'save_state') as mock_save:
+            state._atexit_save()
+            mock_save.assert_called_once()
+
+    def test_atexit_save_skips_empty_state(self, tmp_path):
+        """_atexit_save should skip if state is empty/default."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(state_file=state_file)  # All defaults
         
-        with open(self.state_file, 'r') as f:
-            saved = json.load(f)
+        with patch.object(state, 'save_state') as mock_save:
+            state._atexit_save()
+            mock_save.assert_not_called()
+
+    def test_atexit_save_handles_exceptions(self, tmp_path):
+        """_atexit_save should not raise exceptions."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(
+            state_file=state_file,
+            failure_count=5
+        )
         
-        assert saved["circuit_state"] == "half_open"
-        assert saved["failure_count"] == 5
-        assert saved["pending_urls"] == ["http://example.com"]
+        with patch.object(state, 'save_state', side_effect=IOError("disk full")):
+            # Should not raise
+            state._atexit_save()
 
 
-class TestScraperStateDefaultPath:
-    """Test default state file path is ~/.trader/scraper_state.json."""
+class TestScraperStateClear:
+    """Test clear_state functionality."""
 
-    def test_default_state_path_is_trader_dir(self, tmp_path):
-        """Default state should be in ~/.trader/scraper_state.json."""
-        ScraperState._instance = None
-        
-        with patch.object(Path, 'home', return_value=tmp_path):
-            state = ScraperState()
-            assert str(state.state_file) == str(tmp_path / ".trader" / "scraper_state.json")
-
-
-class TestScraperStateJsonFormat:
-    """Test JSON output format."""
-
-    def setup_method(self):
-        """Set up test fixtures."""
-        ScraperState._instance = None
-        self.temp_dir = Path(tempfile.mkdtemp())
-        self.state_file = self.temp_dir / "scraper_state.json"
-
-    def teardown_method(self):
-        """Clean up."""
-        ScraperState._instance = None
-        if self.temp_dir.exists():
-            shutil.rmtree(self.temp_dir)
-
-    def test_json_is_formatted_with_indent(self):
-        """JSON should be formatted with indentation for readability."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
+    def test_clear_state_removes_file(self, tmp_path):
+        """Should remove state file if it exists."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(state_file=state_file)
         state.save_state()
         
-        with open(self.state_file, 'r') as f:
-            content = f.read()
+        assert state_file.exists()
         
-        # Should have newlines for formatting
-        assert '\n' in content
-        # Should have indentation (spaces)
-        assert '  ' in content
+        state.clear_state()
+        
+        assert not state_file.exists()
 
-    def test_json_keys_are_sorted(self):
-        """JSON keys should be sorted alphabetically."""
-        ScraperState._instance = None
-        state = ScraperState(str(self.state_file))
+    def test_clear_state_no_error_when_no_file(self, tmp_path):
+        """Should not raise error when file doesn't exist."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(state_file=state_file)
+        
+        # Should not raise
+        state.clear_state()
+
+
+class TestScraperStateEdgeCases:
+    """Test edge cases and special scenarios."""
+
+    def test_empty_url_lists(self, tmp_path):
+        """Should handle empty URL lists."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(
+            state_file=state_file,
+            pending_urls=[],
+            completed_urls=[]
+        )
+        
         state.save_state()
+        loaded = state.load_state()
         
-        with open(self.state_file, 'r') as f:
-            data = json.load(f)
+        assert loaded["pending_urls"] == []
+        assert loaded["completed_urls"] == []
+
+    def test_many_urls(self, tmp_path):
+        """Should handle many URLs."""
+        state_file = tmp_path / "state.json"
+        urls = [f"http://example.com/{i}" for i in range(1000)]
+        state = ScraperState(
+            state_file=state_file,
+            pending_urls=urls[:500],
+            completed_urls=urls[500:]
+        )
         
-        # Keys should be in alphabetical order
-        keys = list(data.keys())
-        assert keys == sorted(keys)
+        state.save_state()
+        loaded = state.load_state()
+        
+        assert len(loaded["pending_urls"]) == 500
+        assert len(loaded["completed_urls"]) == 500
+
+    def test_unicode_urls(self, tmp_path):
+        """Should handle URLs with unicode characters."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(
+            state_file=state_file,
+            pending_urls=["http://example.com/测试", "http://example.com/🎉"],
+            completed_urls=["http://example.com/äöü"]
+        )
+        
+        state.save_state()
+        loaded = state.load_state()
+        
+        assert "http://example.com/测试" in loaded["pending_urls"]
+        assert "http://example.com/🎉" in loaded["pending_urls"]
+        assert "http://example.com/äöü" in loaded["completed_urls"]
+
+    def test_special_float_values(self, tmp_path):
+        """Should handle special float values for last_failure_time."""
+        state_file = tmp_path / "state.json"
+        state = ScraperState(
+            state_file=state_file,
+            last_failure_time=None
+        )
+        
+        state.save_state()
+        loaded = state.load_state()
+        
+        assert loaded["last_failure_time"] is None
