@@ -1,0 +1,65 @@
+# Progress Log for Run: 56e7c9bc-f616-417e-b726-aa2abcae8b52
+# Branch: feature/structured-logging
+
+## Stories Completed
+
+### Story 3.0: Create webhook handler for ERROR/CRITICAL logs
+- Status: COMPLETED
+- Commit: feat: 3.0 - Create webhook handler for ERROR/CRITICAL logs
+- Files Modified:
+  - trader/logging_utils.py: Added WebhookHandler class
+  - tests/test_logging_utils.py: Added comprehensive tests
+
+## Implementation Summary
+
+### WebhookHandler Features:
+1. Extends logging.Handler
+2. Only processes ERROR (40) and CRITICAL (50) level logs
+3. POSTs JSON payload to WEBHOOK_URL from config
+4. Gracefully skips if WEBHOOK_URL is not set or empty
+5. Catches and suppresses all network errors (ConnectionError, TimeoutError, HTTPError, URLError)
+6. Uses urllib.request (no new dependencies)
+7. Payload includes timestamp (ISO 8601), level (uppercase), message, and context
+
+### Test Coverage (22 new tests):
+- TestWebhookHandlerBasics: 4 tests
+- TestWebhookHandlerLevelFiltering: 5 tests (verifies ERROR/CRITICAL filtering)
+- TestWebhookHandlerNoUrl: 2 tests (graceful skip when no URL)
+- TestWebhookHandlerPayload: 5 tests (payload structure)
+- TestWebhookHandlerErrorHandling: 4 tests (network error suppression)
+- TestWebhookHandlerIntegration: 2 tests (HTTP request verification)
+
+## Codebase Patterns
+
+### Logging Handler Pattern:
+```python
+class WebhookHandler(logging.Handler):
+    def __init__(self, webhook_url: Optional[str] = None, level: int = logging.ERROR) -> None:
+        super().__init__(level=level)
+        self.webhook_url = webhook_url or config.WEBHOOK_URL
+    
+    def emit(self, record: logging.LogRecord) -> None:
+        # Filter by level first
+        if record.levelno < logging.ERROR:
+            return
+        # Graceful skip if not configured
+        if not self.webhook_url:
+            return
+        try:
+            # Send webhook
+        except Exception:
+            pass  # Suppress all errors
+```
+
+### Mock Pattern for HTTP Testing:
+```python
+with patch('urllib.request.urlopen') as mock_urlopen:
+    mock_response = Mock()
+    mock_response.read.return_value = b'{}'
+    mock_urlopen.return_value.__enter__.return_value = mock_response
+    # ... test code
+```
+
+## Test Results
+- All 81 tests pass
+- Typecheck passes (mypy)
