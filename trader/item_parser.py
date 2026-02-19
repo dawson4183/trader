@@ -1,6 +1,39 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from bs4 import BeautifulSoup
 from .exceptions import ValidationError
+
+
+def parse_item(html: str, selectors: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Parse an item from HTML using CSS selectors.
+    
+    Args:
+        html: The HTML content to parse
+        selectors: Dict mapping field names to CSS selectors
+        
+    Returns:
+        Dict containing extracted item data
+        
+    Raises:
+        ValidationError: If required selectors are missing or parsing fails
+    """
+    validate_html_structure(html, list(selectors.values()))
+    
+    soup = BeautifulSoup(html, 'html.parser')
+    item: Dict[str, Any] = {}
+    
+    for field, selector in selectors.items():
+        element = soup.select_one(selector)
+        if element:
+            item[field] = element.get_text(strip=True)
+        else:
+            raise ValidationError(f"Could not find element for field '{field}' with selector '{selector}'")
+    
+    # Generate item hash from content
+    content_str = ''.join(str(v) for v in item.values())
+    item['item_hash'] = str(hash(content_str) % (2**32))
+    
+    return item
 
 
 def validate_html_structure(html: str, required_selectors: List[str]) -> None:
