@@ -4,9 +4,11 @@ import unittest
 from unittest.mock import patch, MagicMock, Mock, call
 import urllib.error
 import io
+import time
 
 from trader import Scraper
 from trader.scraper import HTTPClient
+from trader.circuit_breaker import CircuitBreaker, CircuitBreakerError, CircuitState
 
 
 class TestHTTPClient(unittest.TestCase):
@@ -100,7 +102,7 @@ class TestModuleStructure(unittest.TestCase):
     def test_all_exports_defined(self) -> None:
         """Test that __all__ is properly defined."""
         import trader
-        self.assertEqual(trader.__all__, ["Scraper"])
+        self.assertEqual(trader.__all__, ["Scraper", "CircuitBreakerError"])
 
 
 class TestScraperRetryBehavior(unittest.TestCase):
@@ -296,6 +298,239 @@ class TestScraperRetryBehavior(unittest.TestCase):
         """Test that Scraper module properly imports retry_with_backoff."""
         from trader.scraper import retry_with_backoff
         self.assertTrue(callable(retry_with_backoff))
+
+
+class TestScraperCircuitBreakerIntegration(unittest.TestCase):
+    """Test cases for Scraper circuit breaker integration."""
+
+    def test_scraper_initializes_with_default_circuit_breaker(self) -> None:
+        """Test Scraper initializes with default circuit breaker."""
+        scraper = Scraper()
+        self.assertIsInstance(scraper.circuit_breaker, CircuitBreaker)
+        self.assertEqual(scraper.circuit_breaker.name, "scraper")
+        self.assertEqual(scraper.circuit_breaker.failure_threshold, 5)
+        self.assertEqual(scraper.circuit_breaker.recovery_timeout, 30.0)
+
+    def test_scraper_initializes_with_custom_circuit_breaker(self) -> None:
+        """Test Scraper initializes with custom circuit breaker instance."""
+        custom_cb = CircuitBreaker(failure_threshold=3, recovery_timeout=10.0, name="custom")
+        scraper = Scraper(circuit_breaker=custom_cb)
+        self.assertEqual(scraper.circuit_breaker, custom_cb)
+        self.assertEqual(scraper.circuit_breaker.name, "custom")
+
+    def test_scraper_initializes_with_circuit_breaker_config(self) -> None:
+        """Test Scraper initializes with circuit breaker config dict."""
+        config = {
+            'failure_threshold': 3,
+            'recovery_timeout': 15.0,
+            'name': 'configured-cb'
+        }
+        scraper = Scraper(circuit_breaker_config=config)
+        self.assertEqual(scraper.circuit_breaker.failure_threshold, 3)
+        self.assertEqual(scraper.circuit_breaker.recovery_timeout, 15.0)
+        self.assertEqual(scraper.circuit_breaker.name, "configured-cb")
+
+    def test_circuit_breaker_takes_precedence_over_config(self) -> None:
+        """Test circuit_breaker parameter takes precedence over config."""
+        custom_cb = CircuitBreaker(failure_threshold=2, name="instance")
+        config = {'failure_threshold': 10, 'name': 'config'}
+        scraper = Scraper(circuit_breaker=custom_cb, circuit_breaker_config=config)
+        self.assertEqual(scraper.circuit_breaker.name, "instance")
+        self.assertEqual(scraper.circuit_breaker.failure_threshold, 2)
+
+    def test_fetch_passes_through_circuit_breaker(self) -> None:
+        """Test fetch() calls pass through circuit breaker."""
+        mock_cb = MagicMock()
+        mock_cb.call.return_value = "fetched content"
+        
+        scraper = Scraper(circuit_breaker=mock_cb)
+        result = scraper.fetch("http://example.com")
+        
+        self.assertEqual(result, "fetched content")
+        mock_cb.call.assert_called_once()
+        # Check that the wrapped method is passed to call()
+        self.assertEqual(mock_cb.call.call_args[0][0].__name__, '_fetch_with_retry')
+
+    @patch("trader.scraper.HTTPClient.get")
+    def test_circuit_breaker_records_success(self, mock_get: MagicMock) -> None:
+        """Test successful fetch records success with circuit breaker."""
+        mock_get.return_value = "success content"
+        scraper = Scraper()
+        
+        result = scraper.fetch("http://example.com")
+        
+        self.assertEqual(result, "success content")
+        self.assertEqual(scraper.circuit_breaker.failure_count, 0)
+        self.assertEqual(scraper.circuit_breaker.state, CircuitState.CLOSED)
+
+    @patch("trader.scraper.HTTPClient.get")
+    def test_circuit_breaker_records_failure(self, mock_get: MagicMock) -> None:
+        """Test failed fetch records failure with circuit breaker."""
+        mock_get.side_effect = ConnectionError("Connection refused")
+        scraper = Scraper(circuit_breaker_config={'failure_threshold': 5})
+        
+        with self.assertRaises(ConnectionError):
+            scraper.fetch("http://example.com")
+        
+        # After one failure, failure count should be 1, state still CLOSED
+        self.assertEqual(scraper.circuit_breaker.failure_count, 1)
+        self.assertEqual(scraper.circuit_breaker.state, CircuitState.CLOSED)
+
+    @patch("trader.scraper.HTTPClient.get")
+    @patch("trader.circuit_breaker.time.time")
+    def test_circuit_breaker_opens_after_threshold(self, mock_time: MagicMock, mock_get: MagicMock) -> None:
+        """Test circuit opens after failure_threshold failures."""
+        mock_time.return_value = 1000.0
+        mock_get.side_effect = ConnectionError("Connection refused")
+        
+        scraper = Scraper(circuit_breaker_config={'failure_threshold': 3})
+        
+        # 3 failures to open circuit
+        for _ in range(3):
+            with self.assertRaises(ConnectionError):
+                scraper.fetch("http://example.com")
+        
+        self.assertEqual(scraper.circuit_breaker.state, CircuitState.OPEN)
+        self.assertEqual(scraper.circuit_breaker.failure_count, 3)
+
+    @patch("trader.scraper.HTTPClient.get")
+    @patch("trader.circuit_breaker.time.time")
+    def test_circuit_breaker_raises_when_open(self, mock_time: MagicMock, mock_get: MagicMock) -> None:
+        """Test CircuitBreakerError raised when circuit is OPEN."""
+        mock_time.return_value = 1000.0
+        # Retry decorator will try 5 times, so provide 5 failures
+        mock_get.side_effect = [ConnectionError("fail")] * 5
+        
+        scraper = Scraper(circuit_breaker_config={'failure_threshold': 1, 'name': 'test-circuit'})
+        
+        # Open the circuit with 1 failure (after all 5 retries are exhausted)
+        with self.assertRaises(ConnectionError):
+            scraper.fetch("http://example.com")
+        
+        self.assertEqual(scraper.circuit_breaker.state, CircuitState.OPEN)
+        # Circuit breaker saw 1 failure (after retries exhausted)
+        self.assertEqual(scraper.circuit_breaker.failure_count, 1)
+        
+        # Next call should raise CircuitBreakerError immediately
+        with self.assertRaises(CircuitBreakerError) as ctx:
+            scraper.fetch("http://example.com")
+        
+        self.assertIn("test-circuit", str(ctx.exception))
+        self.assertIn("OPEN", str(ctx.exception))
+        # Client should not have been called again (circuit blocked it)
+        self.assertEqual(mock_get.call_count, 5)
+
+    @patch("trader.scraper.HTTPClient.get")
+    @patch("trader.circuit_breaker.time.time")
+    def test_circuit_breaker_half_open_recovery(self, mock_time: MagicMock, mock_get: MagicMock) -> None:
+        """Test circuit recovers through HALF_OPEN state."""
+        start_time = 1000.0
+        mock_time.return_value = start_time
+        
+        # First call: 5 retries fail to open the circuit
+        # Then recovery: 5 retries succeed to close the circuit
+        mock_get.side_effect = (
+            [ConnectionError("fail")] * 5 +  # First fetch: all retries fail
+            ["recovery success"]            # Second fetch (recovery): succeeds
+        )
+        
+        scraper = Scraper(circuit_breaker_config={
+            'failure_threshold': 1,  # Only 1 failure needed to open
+            'recovery_timeout': 30.0,
+            'name': 'recovery-test'
+        })
+        
+        # Open the circuit (5 retries all fail)
+        with self.assertRaises(ConnectionError):
+            scraper.fetch("http://example.com")
+        self.assertEqual(scraper.circuit_breaker.state, CircuitState.OPEN)
+        
+        # Before timeout - still OPEN
+        mock_time.return_value = start_time + 29.0
+        with self.assertRaises(CircuitBreakerError):
+            scraper.fetch("http://example.com")
+        
+        # After timeout - should try recovery in HALF_OPEN state
+        mock_time.return_value = start_time + 30.0
+        result = scraper.fetch("http://example.com")
+        
+        self.assertEqual(result, "recovery success")
+        self.assertEqual(scraper.circuit_breaker.state, CircuitState.CLOSED)
+
+    @patch("trader.scraper.HTTPClient.get")
+    def test_scrape_method_uses_circuit_breaker(self, mock_get: MagicMock) -> None:
+        """Test scrape() method also uses circuit breaker via fetch()."""
+        mock_get.return_value = "page content"
+        mock_cb = MagicMock()
+        mock_cb.call.return_value = "page content"
+        mock_cb.state = CircuitState.CLOSED
+        
+        scraper = Scraper(circuit_breaker=mock_cb)
+        result = scraper.scrape("http://example.com")
+        
+        self.assertEqual(result["url"], "http://example.com")
+        self.assertEqual(result["content"], "page content")
+        # Circuit breaker should have been called for fetch
+        self.assertTrue(mock_cb.call.called)
+
+    def test_circuit_breaker_state_property(self) -> None:
+        """Test Scraper exposes circuit breaker state property."""
+        scraper = Scraper()
+        self.assertEqual(scraper.circuit_breaker.state, CircuitState.CLOSED)
+
+    def test_fetch_with_retry_not_called_directly(self) -> None:
+        """Test _fetch_with_retry is internal and should be called through fetch."""
+        scraper = Scraper()
+        # _fetch_with_retry should exist but be "protected"
+        self.assertTrue(hasattr(scraper, '_fetch_with_retry'))
+        self.assertTrue(callable(scraper._fetch_with_retry))
+
+    @patch("trader.scraper.HTTPClient.get")
+    @patch("time.sleep")  # Speed up retry tests
+    def test_retry_and_circuit_breaker_work_together(self, mock_sleep: MagicMock, mock_get: MagicMock) -> None:
+        """Test that retry decorator and circuit breaker work together."""
+        # First 2 calls fail with retryable error, 3rd succeeds
+        mock_get.side_effect = [
+            urllib.error.HTTPError("http://example.com", 500, "Error", {}, io.BytesIO(b"")),
+            urllib.error.HTTPError("http://example.com", 500, "Error", {}, io.BytesIO(b"")),
+            "success"
+        ]
+        
+        scraper = Scraper(circuit_breaker_config={'failure_threshold': 5})
+        
+        result = scraper.fetch("http://example.com")
+        
+        self.assertEqual(result, "success")
+        # Circuit breaker sees 1 successful call (after retries)
+        self.assertEqual(scraper.circuit_breaker.failure_count, 0)
+        self.assertEqual(scraper.circuit_breaker.state, CircuitState.CLOSED)
+
+    @patch("trader.scraper.HTTPClient.get")
+    @patch("time.sleep")
+    def test_circuit_failure_count_tracks_after_retries_exhausted(self, mock_sleep: MagicMock, mock_get: MagicMock) -> None:
+        """Test circuit breaker tracks failures when all retries are exhausted."""
+        # First call: all 5 retry attempts fail
+        # Second call: all 5 retry attempts fail
+        mock_get.side_effect = (
+            [urllib.error.HTTPError("http://example.com", 503, "Error", {}, io.BytesIO(b""))] * 5 +
+            [urllib.error.HTTPError("http://example.com", 503, "Error", {}, io.BytesIO(b""))] * 5
+        )
+        
+        scraper = Scraper(circuit_breaker_config={'failure_threshold': 2})
+        
+        # First call - 5 retries all fail, then circuit breaker counts 1 failure
+        with self.assertRaises(urllib.error.HTTPError):
+            scraper.fetch("http://example.com")
+        
+        self.assertEqual(scraper.circuit_breaker.failure_count, 1)
+        self.assertEqual(scraper.circuit_breaker.state, CircuitState.CLOSED)
+        
+        # Second call - another 5 retries fail, circuit reaches threshold
+        with self.assertRaises(urllib.error.HTTPError):
+            scraper.fetch("http://example.com")
+        
+        self.assertEqual(scraper.circuit_breaker.failure_count, 2)
+        self.assertEqual(scraper.circuit_breaker.state, CircuitState.OPEN)
 
 
 if __name__ == "__main__":
