@@ -157,3 +157,130 @@ class TestValidateHtmlStructure:
         assert result['item_name'] == 'Item With Whitespace'
         assert result['price'] == '$100.00'
         assert result['item_hash'] == 'hash123'
+
+    # Story 4.0: Additional validate_html_structure tests
+    
+    def test_validate_html_structure_single_selector(self) -> None:
+        """Test validate_html_structure() with single CSS selector - validates single selector."""
+        html = """
+        <html><body>
+            <div data-hash="abc">
+                <span class="item-name">Test</span>
+                <span class="price">$10</span>
+            </div>
+        </body></html>
+        """
+        # Should pass without raising
+        validate_html_structure(html)
+        # Verify by using select_one to validate single .item-name selector
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, 'html.parser')
+        assert soup.select_one('.item-name') is not None
+
+    def test_validate_html_structure_multiple_selectors(self) -> None:
+        """Test validate_html_structure() validates all required selectors are present."""
+        html = """
+        <html><body>
+            <div data-hash="abc">
+                <span class="item-name">Test</span>
+                <span class="price">$10</span>
+            </div>
+        </body></html>
+        """
+        # Should pass - all 3 selectors (.item-name, .price, data-hash) are present
+        validate_html_structure(html)
+
+    def test_validate_html_structure_partial_missing(self) -> None:
+        """Test validate_html_structure() fails when some selectors are missing."""
+        # Missing .price but has .item-name and data-hash
+        html_missing_price = """
+        <html><body>
+            <div data-hash="abc">
+                <span class="item-name">Test</span>
+            </div>
+        </body></html>
+        """
+        with pytest.raises(ValidationError, match="Required element not found: .price"):
+            validate_html_structure(html_missing_price)
+        
+        # Missing .item-name but has .price and data-hash
+        html_missing_name = """
+        <html><body>
+            <div data-hash="abc">
+                <span class="price">$10</span>
+            </div>
+        </body></html>
+        """
+        with pytest.raises(ValidationError, match="Required element not found: .item-name"):
+            validate_html_structure(html_missing_name)
+        
+        # Missing data-hash but has .item-name and .price
+        html_missing_hash = """
+        <html><body>
+            <div>
+                <span class="item-name">Test</span>
+                <span class="price">$10</span>
+            </div>
+        </body></html>
+        """
+        with pytest.raises(ValidationError, match="Required attribute not found: data-hash"):
+            validate_html_structure(html_missing_hash)
+
+    def test_validate_html_structure_nested_selector(self) -> None:
+        """Test validate_html_structure() handles nested CSS selectors."""
+        html = """
+        <html><body>
+            <div class="container" data-hash="abc">
+                <div class="inner">
+                    <h2 class="item-name">Nested Item</h2>
+                    <div class="price-wrapper">
+                        <span class="price">$25.00</span>
+                    </div>
+                </div>
+            </div>
+        </body></html>
+        """
+        # Should find elements even when nested deeply
+        validate_html_structure(html)
+
+    def test_validate_html_structure_empty_html(self) -> None:
+        """Test validate_html_structure() raises ValidationError for empty HTML."""
+        with pytest.raises(ValidationError, match="HTML content is empty"):
+            validate_html_structure("")
+        
+        # Also test whitespace-only HTML
+        with pytest.raises(ValidationError, match="HTML content is empty"):
+            validate_html_structure("   \n\t   ")
+
+    def test_validate_html_structure_complex_selectors(self) -> None:
+        """Test validate_html_structure() handles attribute selectors like [data-hash]."""
+        # Test with data-hash on different element types
+        html_div = """
+        <html><body>
+            <div class="item" data-hash="hash-123">
+                <span class="item-name">Item A</span>
+                <span class="price">$10</span>
+            </div>
+        </body></html>
+        """
+        validate_html_structure(html_div)
+        
+        html_span = """
+        <html><body>
+            <span data-hash="hash-456">
+                <b class="item-name">Item B</b>
+                <i class="price">$20</i>
+            </span>
+        </body></html>
+        """
+        validate_html_structure(html_span)
+        
+        html_custom = """
+        <html><body>
+            <custom-element data-hash="custom-789">
+                <p class="item-name">Item C</p>
+                <div class="price">$30</div>
+            </custom-element>
+        </body></html>
+        """
+        validate_html_structure(html_custom)

@@ -4,6 +4,29 @@
 
 ### Completed Stories
 
+#### Story 4.0: Create test_parser.py with mocked HTML fixtures for validate_html_structure()
+- Added 6 new test cases to trader/tests/test_parser.py with specific test names:
+  - test_validate_html_structure_single_selector - validates single CSS selector present
+  - test_validate_html_structure_multiple_selectors - validates all required selectors present
+  - test_validate_html_structure_partial_missing - fails when some selectors missing
+  - test_validate_html_structure_nested_selector - handles nested CSS selectors
+  - test_validate_html_structure_empty_html - raises ValidationError for empty HTML
+  - test_validate_html_structure_complex_selectors - handles attribute selectors like [data-hash]
+- All 28 tests in test_parser.py pass successfully
+- Typecheck passes for trader/parser.py and trader/tests/test_parser.py
+- Committed: feat: 4.0 - Create test_parser.py with mocked HTML fixtures for validate_html_structure()
+
+#### Story 3.0: Create test_parser.py with mocked HTML fixtures for parse_item()
+- Added 5 new test cases to trader/tests/test_parser.py with specific test names:
+  - test_parse_item_valid_html - parses complete item correctly with all fields
+  - test_parse_item_missing_name - raises ValidationError when .item-name missing
+  - test_parse_item_missing_price - raises ValidationError when .price missing
+  - test_parse_item_missing_hash - raises ValidationError when data-hash missing
+  - test_parse_item_malformed_html - handles BeautifulSoup parsing errors gracefully
+- All 22 tests in test_parser.py pass successfully
+- Typecheck passes for trader/parser.py
+- Committed: feat: 3.0 - Create test_parser.py with mocked HTML fixtures for parse_item()
+
 #### Story 1.0: Set up test infrastructure and trader/tests/ directory structure
 - Created trader/tests/ directory with __init__.py
 - Created trader/tests/conftest.py with shared pytest fixtures:
