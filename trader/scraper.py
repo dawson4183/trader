@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union
 
-from trader.exceptions import CircuitOpenError, MaxRetriesExceededError
+from trader.exceptions import CircuitOpenError, MaxRetriesExceededError, ShutdownRequestedError
 from trader.logging_utils import JsonFormatter
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -392,6 +392,117 @@ class CircuitBreaker:
             raise
 
 
+class SignalManager:
+    """Signal handling manager for graceful shutdown.
+
+    Registers signal handlers for SIGINT and SIGTERM that save state
+    before exiting. Preserves original signal handlers and calls them
+    after saving state.
+
+    Attributes:
+        shutdown_requested: Flag indicating shutdown was requested.
+        original_sigint: Original SIGINT handler.
+        original_sigterm: Original SIGTERM handler.
+        state_saver: Callable to save current state.
+
+    Example:
+        >>> def save_state():
+        ...     print("State saved")
+        >>> manager = SignalManager(save_state)
+        >>> # Signal handlers registered automatically
+        >>> print(manager.shutdown_requested)
+        False
+    """
+
+    def __init__(self, state_saver: Callable[[], None]) -> None:
+        """Initialize signal manager.
+
+        Args:
+            state_saver: Function to call to save state on signal.
+        """
+        self.shutdown_requested: bool = False
+        self.state_saver: Callable[[], None] = state_saver
+        self.original_sigint: Union[Callable, int, None] = None
+        self.original_sigterm: Union[Callable, int, None] = None
+        self._register_handlers()
+
+    def _register_handlers(self) -> None:
+        """Register SIGINT and SIGTERM handlers."""
+        try:
+            self.original_sigint = signal.signal(signal.SIGINT, self._handle_sigint)
+        except ValueError:
+            # Signal not supported (e.g., Windows without proper support)
+            pass
+
+        try:
+            self.original_sigterm = signal.signal(signal.SIGTERM, self._handle_sigterm)
+        except ValueError:
+            pass
+
+    def _handle_sigint(self, signum: int, frame: Any) -> None:
+        """Handle SIGINT (Ctrl+C) signal.
+
+        Args:
+            signum: Signal number.
+            frame: Current stack frame.
+        """
+        self._handle_signal(signum, frame)
+
+    def _handle_sigterm(self, signum: int, frame: Any) -> None:
+        """Handle SIGTERM signal.
+
+        Args:
+            signum: Signal number.
+            frame: Current stack frame.
+        """
+        self._handle_signal(signum, frame)
+
+    def _handle_signal(self, signum: int, frame: Any) -> None:
+        """Handle shutdown signal.
+
+        Saves state, sets shutdown flag, then calls original handler.
+
+        Args:
+            signum: Signal number.
+            frame: Current stack frame.
+        """
+        self.shutdown_requested = True
+
+        try:
+            self.state_saver()
+        except Exception:
+            # Don't let save failure prevent original handler from running
+            pass
+
+        # Call original handler based on signal type
+        if signum == signal.SIGINT and self.original_sigint is not None:
+            if callable(self.original_sigint):
+                self.original_sigint(signum, frame)
+            else:
+                # Default handler: raise KeyboardInterrupt
+                raise KeyboardInterrupt
+        elif signum == signal.SIGTERM and self.original_sigterm is not None:
+            if callable(self.original_sigterm):
+                self.original_sigterm(signum, frame)
+            else:
+                # Default handler: exit
+                sys.exit(128 + signum)
+
+    def restore_handlers(self) -> None:
+        """Restore original signal handlers."""
+        try:
+            if self.original_sigint is not None:
+                signal.signal(signal.SIGINT, self.original_sigint)
+        except ValueError:
+            pass
+
+        try:
+            if self.original_sigterm is not None:
+                signal.signal(signal.SIGTERM, self.original_sigterm)
+        except ValueError:
+            pass
+
+
 class Scraper:
     """HTTP scraper for fetching web content.
 
@@ -404,6 +515,7 @@ class Scraper:
         logger: Structured logger instance.
         circuit_breaker: Circuit breaker for error handling.
         state: State persistence manager.
+        signal_manager: Signal handling for graceful shutdown.
 
     Example:
         >>> scraper = Scraper(timeout=30)
@@ -418,6 +530,7 @@ class Scraper:
         timeout: int = 30,
         failure_threshold: int = 10,
         state_file: Optional[str] = None,
+        enable_signal_handling: bool = True,
     ) -> None:
         """Initialize the scraper.
 
@@ -425,6 +538,7 @@ class Scraper:
             timeout: Request timeout in seconds. Defaults to 30.
             failure_threshold: Failures before opening circuit. Defaults to 10.
             state_file: Path to state file. Defaults to ~/.trader/scraper_state.json.
+            enable_signal_handling: Register SIGINT/SIGTERM handlers. Defaults to True.
         """
         self.timeout: int = timeout
         self.logger: logging.Logger = self._setup_logger()
@@ -432,6 +546,24 @@ class Scraper:
         self.circuit_breaker: CircuitBreaker = CircuitBreaker(failure_threshold)
         self._processed_count: int = 0
         self._total_count: int = 0
+        self._pending_urls: List[str] = []
+        self._completed_urls: List[str] = []
+        self.signal_manager: Optional[SignalManager] = None
+
+        if enable_signal_handling:
+            self._setup_signal_handlers()
+
+    def _setup_signal_handlers(self) -> None:
+        """Set up signal handlers for graceful shutdown."""
+        def save_current_state() -> None:
+            """Save current scraper state."""
+            try:
+                self._save_progress(self._pending_urls, self._completed_urls)
+            except Exception:
+                # Log but don't raise during signal handling
+                pass
+
+        self.signal_manager = SignalManager(save_current_state)
 
     def _setup_logger(self) -> logging.Logger:
         """Set up structured logging for the scraper.
@@ -457,6 +589,10 @@ class Scraper:
             pending_urls: List of pending URLs.
             completed_urls: List of completed URLs.
         """
+        # Store URLs for signal handler access
+        self._pending_urls = pending_urls
+        self._completed_urls = completed_urls
+
         self.state.save_state(
             circuit_state=self.circuit_breaker.state,
             failure_count=self.circuit_breaker.failure_count,
@@ -694,6 +830,17 @@ class Scraper:
                     # Save progress after each URL
                     self._save_progress(pending_urls, completed_urls)
 
+                    # Check if shutdown was requested via signal
+                    if self.signal_manager is not None and self.signal_manager.shutdown_requested:
+                        self.logger.warning(
+                            "Shutdown signal received, stopping after current URL",
+                            extra={
+                                "completed": len(completed_urls),
+                                "pending": len(pending_urls),
+                            }
+                        )
+                        raise ShutdownRequestedError("Shutdown signal received")
+
                 except MaxRetriesExceededError:
                     # Retry exhausted - count as circuit failure
                     self.circuit_breaker.record_failure()
@@ -722,6 +869,17 @@ class Scraper:
             )
             self._save_progress(pending_urls, completed_urls)
             raise
+        except ShutdownRequestedError as e:
+            self.logger.warning(
+                "Scrape stopped gracefully due to shutdown signal",
+                extra={
+                    "completed": len(completed_urls),
+                    "pending": len(pending_urls),
+                    "error_message": str(e),
+                }
+            )
+            self._save_progress(pending_urls, completed_urls)
+            # Return results instead of raising - graceful shutdown
         except Exception as e:
             self.logger.error(
                 "Scrape failed with error",

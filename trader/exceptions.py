@@ -67,3 +67,21 @@ class CircuitOpenError(Exception):
         trader.exceptions.CircuitOpenError: Circuit breaker is OPEN after 10 failures
     """
     pass
+
+
+class ShutdownRequestedError(Exception):
+    """Exception raised when shutdown signal is received.
+    
+    This exception is raised by the scraper when a SIGINT or SIGTERM
+    signal is received, to gracefully exit after the current URL.
+    
+    Attributes:
+        message: Explanation of the shutdown request.
+    
+    Example:
+        >>> raise ShutdownRequestedError("SIGINT received, shutting down gracefully")
+        Traceback (most recent call last):
+          ...
+        trader.exceptions.ShutdownRequestedError: SIGINT received
+    """
+    pass

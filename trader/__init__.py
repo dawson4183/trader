@@ -26,10 +26,11 @@ Modules:
 """
 
 from trader.item_parser import validate_html_structure, validate_price, deduplicate_items
-from trader.exceptions import ValidationError
-from trader.scraper import Scraper, ScraperState
+from trader.exceptions import ValidationError, CircuitOpenError, MaxRetriesExceededError, ShutdownRequestedError
+from trader.scraper import Scraper, ScraperState, SignalManager, CircuitBreaker, scraper_retry
 from trader.database import DatabaseConnection, get_connection
 from trader.logging_utils import JsonFormatter, WebhookHandler
+from trader.exceptions import ValidationError, CircuitOpenError, MaxRetriesExceededError, ShutdownRequestedError
 
 __version__ = "0.1.0"
 __all__ = [
@@ -39,9 +40,16 @@ __all__ = [
     "deduplicate_items",
     # Exceptions
     "ValidationError",
+    "CircuitOpenError",
+    "MaxRetriesExceededError",
+    "ShutdownRequestedError",
     # Scraping
     "Scraper",
     "ScraperState",
+    "SignalManager",
+    "CircuitBreaker",
+    # Scraping decorator
+    "scraper_retry",
     # Database
     "DatabaseConnection",
     "get_connection",
