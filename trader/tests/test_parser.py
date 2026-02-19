@@ -77,6 +77,41 @@ class TestParseItem:
         assert result['item_name'] == 'Another Item'
         assert result['price'] == '€25.00'
 
+    def test_parse_item_valid_html(self, parser_html_basic: str) -> None:
+        """Test that parse_item() parses complete item correctly from valid HTML."""
+        result = parse_item(parser_html_basic)
+        assert result == {
+            'item_name': 'Test Item',
+            'price': '$19.99',
+            'item_hash': 'abc123xyz'
+        }
+
+    def test_parse_item_missing_name(self, parser_html_no_item_name: str) -> None:
+        """Test that parse_item() raises ValidationError when .item-name is missing."""
+        with pytest.raises(ValidationError, match="Could not find item name element with selector '.item-name'"):
+            parse_item(parser_html_no_item_name)
+
+    def test_parse_item_missing_price(self, parser_html_no_price: str) -> None:
+        """Test that parse_item() raises ValidationError when .price is missing."""
+        with pytest.raises(ValidationError, match="Could not find price element with selector '.price'"):
+            parse_item(parser_html_no_price)
+
+    def test_parse_item_missing_hash(self, parser_html_no_data_hash: str) -> None:
+        """Test that parse_item() raises ValidationError when data-hash is missing."""
+        with pytest.raises(ValidationError, match="Could not find element with 'data-hash' attribute"):
+            parse_item(parser_html_no_data_hash)
+
+    def test_parse_item_malformed_html(self) -> None:
+        """Test that parse_item() handles BeautifulSoup parsing errors gracefully."""
+        # BeautifulSoup handles malformed HTML gracefully, but we test with something
+        # that could cause issues - test with HTML that has valid structure but
+        # unusual content that might cause parsing issues
+        malformed_html = "<not-valid>unclosed tag"
+        # BeautifulSoup is lenient and will still parse this without raising,
+        # but it won't find our required elements, so it should raise ValidationError
+        with pytest.raises(ValidationError):
+            parse_item(malformed_html)
+
 
 class TestValidateHtmlStructure:
     """Test cases for validate_html_structure() function."""
