@@ -76,6 +76,44 @@ class CircuitBreaker:
         return wrapper  # type: ignore
 
 
+def circuit_breaker(
+    failure_threshold: int = 5,
+    recovery_timeout: float = 60.0,
+    expected_exception: Type[Exception] = Exception
+) -> Callable[[F], F]:
+    """
+    Circuit breaker decorator factory.
+    
+    Creates a circuit breaker decorator with specified configuration.
+    
+    Args:
+        failure_threshold: Number of failures before opening circuit
+        recovery_timeout: Seconds to wait before attempting recovery
+        expected_exception: Exception type(s) to count as failures
+        
+    Returns:
+        Decorator that wraps function with circuit breaker protection
+        
+    Example:
+        @circuit_breaker(failure_threshold=3, recovery_timeout=30.0)
+        def fetch_data():
+            return requests.get('http://api.example.com/data')
+    """
+    breaker = CircuitBreaker(
+        failure_threshold=failure_threshold,
+        recovery_timeout=recovery_timeout,
+        expected_exception=expected_exception
+    )
+    
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            return breaker.call(func, *args, **kwargs)
+        return wrapper  # type: ignore
+    
+    return decorator
+
+
 def retry(
     max_attempts: int = 3,
     exceptions: Union[Tuple[Type[Exception], ...], List[Type[Exception]]] = (Exception,),

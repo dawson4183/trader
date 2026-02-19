@@ -33,3 +33,24 @@ class MaxRetriesExceededError(Exception):
         """
         self.message = message
         super().__init__(self.message)
+
+
+class CircuitOpenError(Exception):
+    """Raised when circuit breaker is OPEN.
+
+    This exception is raised by the CircuitBreaker when the circuit
+    is in OPEN state, meaning calls are rejected without attempting
+    the underlying operation. This protects downstream services from
+    being overwhelmed when failures exceed the threshold.
+
+    Attributes:
+        message: Explanation of why the circuit is open.
+        failure_count: Number of consecutive failures that caused the circuit to open.
+
+    Example:
+        >>> raise CircuitOpenError("Circuit breaker is OPEN after 10 failures")
+        Traceback (most recent call last):
+          ...
+        trader.exceptions.CircuitOpenError: Circuit breaker is OPEN after 10 failures
+    """
+    pass
