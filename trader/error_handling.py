@@ -5,9 +5,8 @@ import json
 import os
 import atexit
 import tempfile
-import threading
 from pathlib import Path
-from typing import Callable, Any, TypeVar, Optional, Tuple, Type, Dict, List
+from typing import Callable, Any, TypeVar, Optional, Tuple, Type, Union, List, Dict
 from enum import Enum, auto
 from .exceptions import ValidationError, MaxRetriesExceededError
 
@@ -38,16 +37,14 @@ class CircuitBreaker:
         self.state = CircuitState.CLOSED
         self.failure_count = 0
         self.last_failure_time: Optional[float] = None
-        self._lock = threading.Lock()
     
     def call(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Call a function with circuit breaker protection."""
-        with self._lock:
-            if self.state == CircuitState.OPEN:
-                if self._should_attempt_reset():
-                    self.state = CircuitState.HALF_OPEN
-                else:
-                    raise ValidationError(f"Circuit breaker is OPEN - service unavailable")
+        if self.state == CircuitState.OPEN:
+            if self._should_attempt_reset():
+                self.state = CircuitState.HALF_OPEN
+            else:
+                raise ValidationError(f"Circuit breaker is OPEN - service unavailable")
         
         try:
             result = func(*args, **kwargs)
@@ -65,18 +62,16 @@ class CircuitBreaker:
     
     def _on_success(self) -> None:
         """Handle successful call."""
-        with self._lock:
-            self.failure_count = 0
-            self.state = CircuitState.CLOSED
+        self.failure_count = 0
+        self.state = CircuitState.CLOSED
     
     def _on_failure(self) -> None:
         """Handle failed call."""
-        with self._lock:
-            self.failure_count += 1
-            self.last_failure_time = time.time()
-            
-            if self.failure_count >= self.failure_threshold:
-                self.state = CircuitState.OPEN
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+        
+        if self.failure_count >= self.failure_threshold:
+            self.state = CircuitState.OPEN
     
     def __call__(self, func: F) -> F:
         """Use circuit breaker as a decorator."""
@@ -91,7 +86,8 @@ def circuit_breaker(
     recovery_timeout: float = 60.0,
     expected_exception: Type[Exception] = Exception
 ) -> Callable[[F], F]:
-    """Circuit breaker decorator factory.
+    """
+    Circuit breaker decorator factory.
     
     Creates a circuit breaker decorator with specified configuration.
     
@@ -102,6 +98,11 @@ def circuit_breaker(
         
     Returns:
         Decorator that wraps function with circuit breaker protection
+        
+    Example:
+        @circuit_breaker(failure_threshold=3, recovery_timeout=30.0)
+        def fetch_data():
+            return requests.get('http://api.example.com/data')
     """
     breaker = CircuitBreaker(
         failure_threshold=failure_threshold,
@@ -120,11 +121,12 @@ def circuit_breaker(
 
 def retry(
     max_attempts: int = 3,
-    exceptions: Tuple[Type[Exception], ...] = (Exception,),
+    exceptions: Union[Tuple[Type[Exception], ...], List[Type[Exception]]] = (Exception,),
     delay: float = 1.0,
     backoff: float = 2.0,
 ) -> Callable[[F], F]:
-    """Retry decorator with exponential backoff.
+    """
+    Retry decorator with exponential backoff.
     
     Args:
         max_attempts: Maximum number of retry attempts
@@ -134,26 +136,29 @@ def retry(
         
     Returns:
         Decorated function with retry logic
+        
+    Raises:
+        MaxRetriesExceededError: When all retry attempts are exhausted
     """
+    # Convert list to tuple if needed
+    if isinstance(exceptions, list):
+        exceptions = tuple(exceptions)
+    
     def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             current_delay = delay
-            last_exception: Optional[Exception] = None
             
             for attempt in range(max_attempts):
                 try:
                     return func(*args, **kwargs)
-                except exceptions as e:
-                    last_exception = e
+                except exceptions:
                     if attempt < max_attempts - 1:
                         time.sleep(current_delay)
                         current_delay *= backoff
             
-            # All retries exhausted - re-raise the last exception
-            if last_exception is not None:
-                raise last_exception
-            raise MaxRetriesExceededError(f"Function failed after {max_attempts} attempts")
+            # All retries exhausted - one final call to propagate the exception
+            return func(*args, **kwargs)
         
         return wrapper  # type: ignore
     
@@ -170,11 +175,8 @@ class RetryWithCircuitBreaker:
         failure_threshold: int = 5,
         recovery_timeout: float = 60.0
     ):
-        self.retry_decorator = retry(
-            max_attempts=max_attempts,
-            exceptions=(Exception,),
-            delay=delay,
-        )
+        self.max_attempts = max_attempts
+        self.delay = delay
         self.circuit_breaker = CircuitBreaker(
             failure_threshold=failure_threshold,
             recovery_timeout=recovery_timeout
@@ -182,11 +184,27 @@ class RetryWithCircuitBreaker:
     
     def __call__(self, func: F) -> F:
         """Apply both retry and circuit breaker to a function."""
-        retried = self.retry_decorator(func)
-        
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
-            return self.circuit_breaker.call(retried, *args, **kwargs)
+            current_delay = self.delay
+            last_exception: Optional[Exception] = None
+            
+            for attempt in range(self.max_attempts):
+                try:
+                    return self.circuit_breaker.call(func, *args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < self.max_attempts - 1:
+                        time.sleep(current_delay)
+                        current_delay *= 2.0
+            
+            # All retries exhausted - re-raise the last exception
+            if last_exception is not None:
+                raise last_exception
+            
+            raise MaxRetriesExceededError(
+                f"Function failed after {self.max_attempts} attempts"
+            )
         
         return wrapper  # type: ignore
 
