@@ -39,3 +39,23 @@ class ValidationError(Exception):
         """
         self.message = message
         super().__init__(self.message)
+
+
+class MaxRetriesExceededError(Exception):
+    """Raised when all retry attempts have been exhausted.
+
+    This exception is raised by the retry decorator when a function
+    continues to fail after all retry attempts have been exhausted.
+
+    Attributes:
+        message: A descriptive error message explaining the failure.
+    """
+
+    def __init__(self, message: str) -> None:
+        """Initialize MaxRetriesExceededError with a descriptive message.
+
+        Args:
+            message: The error message describing the retry exhaustion.
+        """
+        self.message = message
+        super().__init__(self.message)
