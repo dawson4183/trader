@@ -1,20 +1,33 @@
 """Alert module for sending webhook notifications.
 
 Provides functionality to send alerts to a configured webhook endpoint
-for monitoring and notification purposes.
+for monitoring and notification purposes. Also logs all alerts to the
+standard Python logging system.
 """
 
 import json
+import logging
 import os
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from typing import Literal
 
+# Module-level logger
+logger = logging.getLogger(__name__)
+
 
 AlertLevelType = Literal["info", "warning", "error", "critical"]
 
 VALID_LEVELS = {"info", "warning", "error", "critical"}
+
+# Map alert levels to logging levels
+LEVEL_TO_LOGGING: dict[AlertLevelType, int] = {
+    "critical": logging.CRITICAL,
+    "error": logging.ERROR,
+    "warning": logging.WARNING,
+    "info": logging.INFO,
+}
 
 
 def send_alert(message: str, level: AlertLevelType) -> bool:
@@ -52,8 +65,13 @@ def send_alert(message: str, level: AlertLevelType) -> bool:
         "message": message,
         "level": level,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "source": "trader",
+        "source": "trader.alert",
     }
+
+    # Log the alert before attempting webhook call
+    # Log format includes timestamp (added by logging), level, message, and source module
+    log_level = LEVEL_TO_LOGGING[level]
+    logger.log(log_level, "[ALERT %s] %s", level.upper(), message)
 
     # Send POST request
     try:
