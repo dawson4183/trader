@@ -39,6 +39,18 @@
 - Typecheck passes: mypy trader/validators.py returns no errors
 - Tests pass: pytest tests/test_validators.py -k price passes (10 tests)
 
+#### Story 5.0: Implement deduplicate_items() function
+- Added deduplicate_items() to trader/validators.py
+- Function signature: deduplicate_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
+- Identifies duplicates by 'item_hash' key in each item dict
+- Returns new list with duplicates removed (keeps first occurrence)
+- Preserves original item order for unique items
+- Handles empty list input (returns empty list)
+- Raises ValidationError with formatted message 'Item missing item_hash: {item}' if any item missing item_hash key
+- Typecheck passes: mypy trader/validators.py returns no errors
+- Tests pass: pytest tests/test_validators.py -k deduplicate passes (9 tests)
+- All 27 validator tests pass
+
 ### Codebase Patterns
 
 #### Project Structure
