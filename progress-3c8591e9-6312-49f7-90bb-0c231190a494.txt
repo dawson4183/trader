@@ -1,0 +1,106 @@
+# Progress Log for Run: 3c8591e9-6312-49f7-90bb-0c231190a494
+# Branch: feature/health-checks-alerts
+
+## Stories Completed
+
+### Story 2.0: Create database schema for health tracking
+- Status: COMPLETED
+- Commit: feat: 2.0 - Create database schema for health tracking
+- Files Added:
+  - trader/schema.py: Schema management with create_tables(), drop_tables(), table_exists(), get_table_schema()
+  - tests/test_schema.py: Comprehensive tests for schema functionality
+- Files Modified:
+  - trader/database.py: Added PRAGMA query support for schema inspection
+
+## Implementation Summary
+
+### Schema Features:
+1. `create_tables()` - Idempotent function to create all schema tables
+2. `drop_tables()` - Function to drop all schema tables
+3. `table_exists()` - Check if a specific table exists
+4. `get_table_schema()` - Get column information for a table
+
+### Tables Created:
+
+#### scraper_runs
+- id: INTEGER PRIMARY KEY AUTOINCREMENT
+- started_at: TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+- ended_at: TIMESTAMP (nullable)
+- status: TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed'))
+- items_count: INTEGER DEFAULT 0
+
+#### scraper_failures
+- id: INTEGER PRIMARY KEY AUTOINCREMENT
+- run_id: INTEGER NOT NULL (foreign key to scraper_runs.id)
+- error_message: TEXT NOT NULL
+- level: TEXT NOT NULL CHECK(level IN ('warning', 'error', 'critical'))
+- occurred_at: TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+- Foreign key constraint with ON DELETE CASCADE
+
+#### health_checks
+- id: INTEGER PRIMARY KEY AUTOINCREMENT
+- check_type: TEXT NOT NULL
+- status: TEXT NOT NULL CHECK(status IN ('healthy', 'unhealthy'))
+- details: TEXT (nullable)
+- checked_at: TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+### Indexes Created:
+- idx_scraper_runs_status
+- idx_scraper_runs_started_at
+- idx_scraper_failures_run_id
+- idx_scraper_failures_occurred_at
+- idx_health_checks_type
+- idx_health_checks_checked_at
+
+### Test Coverage (29 tests in test_schema.py):
+- TestCreateTables: 11 tests (table creation, idempotency, columns, foreign keys, indexes)
+- TestDropTables: 2 tests (drop all, safe on empty)
+- TestTableExists: 2 tests (exists true/false)
+- TestGetTableSchema: 2 tests (returns columns, empty for nonexistent)
+- TestDataOperations: 10 tests (inserts, constraints, foreign keys, cascade delete)
+- TestIntegrationWithContextManager: 2 tests (context manager usage)
+
+## Codebase Patterns
+
+### Schema Pattern:
+```python
+def create_tables(db: Optional[DatabaseConnection] = None) -> None:
+    if db is None:
+        db = DatabaseConnection()
+    
+    # Create tables with IF NOT EXISTS (idempotent)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS table_name (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ...
+        )
+    """)
+    
+    # Create indexes
+    db.execute("CREATE INDEX IF NOT EXISTS idx_name ON table_name(column)")
+```
+
+### CHECK Constraint Pattern:
+```sql
+status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed'))
+```
+
+### Foreign Key Pattern:
+```sql
+run_id INTEGER NOT NULL,
+FOREIGN KEY (run_id) REFERENCES scraper_runs(id) ON DELETE CASCADE
+```
+
+### PRAGMA Query Pattern (for schema inspection):
+```python
+# PRAGMA queries return results like SELECT
+schema = db.execute(f"PRAGMA table_info({table_name})")
+fk_info = db.execute("PRAGMA foreign_key_list(scraper_failures)")
+```
+
+## Test Results
+- All 29 schema tests pass
+- Typecheck passes (mypy)
+
+## Stories Remaining
+- Story 3.0-11.0: Additional stories for health checks and alerts

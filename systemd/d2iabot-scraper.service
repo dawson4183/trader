@@ -1,0 +1,16 @@
+[Unit]
+Description=D2IA Bot Scraper Service
+After=network.target
+
+[Service]
+Type=simple
+User=d2iabot
+WorkingDirectory=/home/dawson/.openclaw/workspaces/workflows/feature-dev/agents/planner
+ExecStart=/home/dawson/.openclaw/workspaces/workflows/feature-dev/agents/planner/venv/bin/python -m trader.cli scrape
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
