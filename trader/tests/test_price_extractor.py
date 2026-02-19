@@ -211,3 +211,50 @@ class TestFormatPriceEdgeCases:
         """Should default to $ for unknown currency."""
         result = format_price(10.0, "XYZ")
         assert result == "$10.00"
+
+
+class TestExtractPriceMultiCurrency:
+    """Test multi-currency support for price extraction."""
+
+    def test_extract_price_usd_symbol(self) -> None:
+        """Parse '$' prefixed prices using extract_price_with_currency."""
+        result = extract_price_with_currency("$10.99")
+        assert result['amount'] == 10.99
+        assert result['currency'] == 'USD'
+
+    def test_extract_price_euro_symbol(self) -> None:
+        """Parse '€' prefixed prices using extract_price_with_currency."""
+        result = extract_price_with_currency("€20.50")
+        assert result['amount'] == 20.50
+        assert result['currency'] == 'EUR'
+
+    def test_extract_price_gbp_symbol(self) -> None:
+        """Parse '£' prefixed prices using extract_price_with_currency."""
+        result = extract_price_with_currency("£15.75")
+        assert result['amount'] == 15.75
+        assert result['currency'] == 'GBP'
+
+    def test_extract_price_usd_code(self) -> None:
+        """Parse 'USD' suffixed prices using extract_price_with_currency."""
+        result = extract_price_with_currency("10.99 USD")
+        assert result['amount'] == 10.99
+        assert result['currency'] == 'USD'
+
+    def test_extract_price_eur_code(self) -> None:
+        """Parse 'EUR' suffixed prices using extract_price_with_currency."""
+        result = extract_price_with_currency("25.00 EUR")
+        assert result['amount'] == 25.00
+        assert result['currency'] == 'EUR'
+
+    def test_extract_price_mixed_format(self) -> None:
+        """Handle 'Price: $10.99 USD' mixed format."""
+        result = extract_price_with_currency("Price: $10.99 USD")
+        assert result['amount'] == 10.99
+        assert result['currency'] == 'USD'
+        assert result['raw'] == "Price: $10.99 USD"
+
+    def test_extract_price_no_decimal(self) -> None:
+        """Handle whole numbers like '$10'."""
+        result = extract_price_with_currency("$10")
+        assert result['amount'] == 10.0
+        assert result['currency'] == 'USD'
