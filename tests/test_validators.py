@@ -3,7 +3,7 @@
 import pytest
 
 from trader.exceptions import ValidationError
-from trader.validators import validate_html_structure
+from trader.validators import validate_html_structure, validate_price
 
 
 class TestValidateHtmlStructure:
@@ -119,3 +119,74 @@ class TestValidateHtmlStructure:
             validate_html_structure(html, required_selectors)
 
         assert str(exc_info.value) == 'Missing required selectors: .first, .second'
+
+
+class TestValidatePrice:
+    """Test cases for validate_price function."""
+
+    def test_returns_true_for_positive_integer(self) -> None:
+        """Return True for valid positive integer price."""
+        result = validate_price(10)
+
+        assert result is True
+
+    def test_returns_true_for_positive_float(self) -> None:
+        """Return True for valid positive float price."""
+        result = validate_price(10.99)
+
+        assert result is True
+
+    def test_raises_error_for_zero(self) -> None:
+        """Raise ValidationError for zero price."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_price(0)
+
+        assert 'Price must be greater than 0, got: 0' == str(exc_info.value)
+
+    def test_raises_error_for_negative_integer(self) -> None:
+        """Raise ValidationError for negative integer price."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_price(-5)
+
+        assert 'Price must be greater than 0, got: -5' == str(exc_info.value)
+
+    def test_raises_error_for_negative_float(self) -> None:
+        """Raise ValidationError for negative float price."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_price(-0.01)
+
+        assert 'Price must be greater than 0, got: -0.01' == str(exc_info.value)
+
+    def test_raises_error_for_none(self) -> None:
+        """Raise ValidationError for None price."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_price(None)  # type: ignore[arg-type]
+
+        assert 'Price must be numeric' == str(exc_info.value)
+
+    def test_raises_error_for_string(self) -> None:
+        """Raise ValidationError for string price."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_price("10.99")  # type: ignore[arg-type]
+
+        assert 'Price must be numeric' == str(exc_info.value)
+
+    def test_raises_error_for_list(self) -> None:
+        """Raise ValidationError for list price."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_price([10, 20])  # type: ignore[arg-type]
+
+        assert 'Price must be numeric' == str(exc_info.value)
+
+    def test_handles_small_positive_float(self) -> None:
+        """Return True for small positive float price."""
+        result = validate_price(0.01)
+
+        assert result is True
+
+    def test_error_message_matches_format_for_zero(self) -> None:
+        """Ensure error message format matches 'Price must be greater than 0, got: {price}'."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_price(0)
+
+        assert str(exc_info.value) == 'Price must be greater than 0, got: 0'

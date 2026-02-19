@@ -4,6 +4,21 @@
 
 ### Completed Stories
 
+#### Story 3.0: Implement validate_html_structure() function
+- Created trader/validators.py with validate_html_structure() function
+- Function signature: validate_html_structure(html: str, required_selectors: List[str]) -> bool
+- Uses BeautifulSoup to parse HTML and check CSS selectors
+- Returns True if all selectors found, raises ValidationError if any missing
+- Error message format: 'Missing required selectors: selector1, selector2'
+- Created tests/test_validators.py with 8 comprehensive test cases
+- All tests pass: pytest tests/test_validators.py -k html passes
+- Typecheck passes: mypy trader/validators.py returns no errors
+
+#### Story 2.0: Create ValidationError exception class
+- Created trader/exceptions.py with ValidationError class
+- ValidationError inherits from Exception with a message attribute
+- Tests in tests/test_exceptions.py verify exception behavior
+
 #### Story 1.0: Set up project structure and dependencies
 - Created trader/ directory with __init__.py
 - Created tests/ directory with __init__.py
@@ -12,6 +27,17 @@
 - Typecheck passes with mypy trader/
 - Created tests/test_structure.py with 7 structure tests
 - All 16 tests pass (9 existing + 7 new structure tests)
+
+#### Story 4.0: Implement validate_price() function
+- Added validate_price() to trader/validators.py
+- Function signature: validate_price(price: Union[int, float]) -> bool
+- Returns True if price > 0
+- Raises ValidationError with message 'Price must be greater than 0, got: {price}' if price <= 0
+- Raises ValidationError with message 'Price must be numeric' if price is not int or float
+- Handles edge cases: zero, negative numbers, None, strings
+- Added 10 comprehensive test cases for validate_price()
+- Typecheck passes: mypy trader/validators.py returns no errors
+- Tests pass: pytest tests/test_validators.py -k price passes (10 tests)
 
 ### Codebase Patterns
 
@@ -25,9 +51,11 @@
 - Use mypy with strict settings
 - Add types-beautifulsoup4 for BeautifulSoup type stubs
 - Python 3.9+ for full compatibility
+- Use Union for type hints (Union[int, float])
 
 #### Testing
 - pytest as the test runner
 - Test files prefixed with test_
 - Test functions prefixed with test_
 - Use pytest.raises() for exception testing
+- Add # type: ignore[arg-type] for intentional type violations in tests

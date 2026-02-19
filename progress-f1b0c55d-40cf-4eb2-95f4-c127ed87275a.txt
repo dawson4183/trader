@@ -1,0 +1,36 @@
+# Progress Log - Systemd Scraper Feature
+## Run ID: f1b0c55d-40cf-4eb2-95f4-c127ed87275a
+
+## Story 1.0: Create CLI entry point module - COMPLETED
+
+### Changes Made:
+- Created `trader/cli.py` with full CLI implementation using argparse
+  - `main()` function with argparse.ArgumentParser
+  - `scrape` subcommand that calls item_parser functions (validate_html_structure)
+  - `health` subcommand with --health-check flag for health checks
+  - Proper exit codes (0 for success, non-zero for errors)
+- Created `trader/__main__.py` to enable `python -m trader.cli` execution
+- Created `tests/test_cli.py` with comprehensive test coverage (16 tests)
+  - Tests for parser creation
+  - Tests for scrape command (success, missing selectors, file not found, validation errors)
+  - Tests for health check command
+  - Tests for main function edge cases
+
+### Acceptance Criteria:
+- [x] trader/cli.py file exists with proper imports
+- [x] CLI has main() function with argparse.ArgumentParser
+- [x] CLI has default 'scrape' subcommand that calls item parser functions
+- [x] Module can be run via python -m trader.cli
+- [x] CLI returns exit code 0 on success, non-zero on error
+- [x] Tests for CLI module pass (test_cli.py)
+- [x] Typecheck passes
+
+### Codebase Patterns:
+- CLI modules use argparse with subparsers for commands
+- Use type hints with Optional and List from typing module
+- Return int exit codes from command functions
+- Mock builtins.print in tests to capture output
+- Use mock_open for file operation tests
+- Explicit type annotations help mypy pass
+
+## Remaining Stories: 5

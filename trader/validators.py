@@ -1,6 +1,6 @@
 """Validation functions for the trader package."""
 
-from typing import List
+from typing import List, Union
 
 from bs4 import BeautifulSoup
 
@@ -34,5 +34,29 @@ def validate_html_structure(html: str, required_selectors: List[str]) -> bool:
     if missing_selectors:
         selector_list = ', '.join(missing_selectors)
         raise ValidationError(f'Missing required selectors: {selector_list}')
+
+    return True
+
+
+def validate_price(price: Union[int, float]) -> bool:
+    """Validate that a price value is numeric and greater than 0.
+
+    Args:
+        price: The price value to validate. Must be an int or float.
+
+    Returns:
+        True if price is numeric and greater than 0.
+
+    Raises:
+        ValidationError: If price is not numeric (int or float).
+        ValidationError: If price is less than or equal to 0.
+    """
+    # Check if price is numeric (int or float)
+    if not isinstance(price, (int, float)):
+        raise ValidationError('Price must be numeric')
+
+    # Check if price is greater than 0
+    if price <= 0:
+        raise ValidationError(f'Price must be greater than 0, got: {price}')
 
     return True
