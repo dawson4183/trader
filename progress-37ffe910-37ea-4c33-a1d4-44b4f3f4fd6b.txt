@@ -4,6 +4,40 @@
 
 ## Completed Stories
 
+### Story 11.0: Create test_error_handling.py for circuit breaker tests
+**Status:** COMPLETED
+
+**Acceptance Criteria Met:**
+1. ✅ test_circuit_breaker_initial_state passes - starts in CLOSED state
+2. ✅ test_circuit_breaker_opens_after_threshold passes - transitions to OPEN after failures
+3. ✅ test_circuit_breaker_open_rejects_calls passes - raises CircuitBreakerOpenError
+4. ✅ test_circuit_breaker_half_open_after_cooldown passes - transitions to HALF_OPEN
+5. ✅ test_circuit_breaker_closes_on_success passes - returns to CLOSED after success in HALF_OPEN
+6. ✅ test_circuit_breaker_resets_on_success passes - failure count resets on success
+7. ✅ test_circuit_breaker_concurrent_access passes - thread-safe operations
+8. ✅ test_circuit_breaker_decorator passes - @circuit_breaker decorator works
+9. ✅ All 29 tests for circuit breaker pass
+10. ✅ Typecheck passes with mypy
+
+**Tests Written:**
+- test_circuit_breaker_initial_state - verifies circuit breaker starts CLOSED
+- test_circuit_breaker_successful_call - verifies success resets state
+- test_circuit_breaker_counts_failures - verifies failure tracking
+- test_circuit_breaker_opens_after_threshold - verifies OPEN transition
+- test_circuit_breaker_open_rejects_calls - verifies rejection when OPEN
+- test_circuit_breaker_half_open_after_cooldown - verifies cooldown transition
+- test_circuit_breaker_closes_on_success - verifies return to CLOSED
+- test_circuit_breaker_resets_on_success - verifies failure count reset
+- test_circuit_breaker_concurrent_access - verifies thread safety
+- test_circuit_breaker_decorator - verifies @circuit_breaker factory decorator
+
+**Changes Made:**
+- Updated tests/test_error_handling.py with comprehensive circuit breaker tests
+- Added MaxRetriesExceededError to trader/exceptions.py
+- Added circuit_breaker() decorator factory to trader/error_handling.py
+
+**Commit:** feat: 11.0 - Create test_error_handling.py for circuit breaker tests
+
 ### Story 10.0: Create test_error_handling.py for retry decorator tests
 **Status:** COMPLETED
 
