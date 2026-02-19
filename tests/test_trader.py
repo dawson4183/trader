@@ -1,16 +1,16 @@
 """Tests for the trader module structure."""
 
+import json
+import os
 import unittest
 from unittest.mock import patch, MagicMock, Mock, call
 import urllib.error
 import io
 import time
-import os
 
-from trader import Scraper
+from trader import Scraper, StateManager
 from trader.scraper import HTTPClient
 from trader.circuit_breaker import CircuitBreaker, CircuitBreakerError, CircuitState
-from trader.state import StateManager
 
 
 class TestHTTPClient(unittest.TestCase):

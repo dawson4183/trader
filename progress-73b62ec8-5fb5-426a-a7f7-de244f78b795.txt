@@ -125,3 +125,30 @@ Started: 2026-02-18
 - **Learnings:** Using pathlib.Path for directory creation; auto-save counter reset after save; crash save should never raise exceptions; state persistence enables resume-from-crash functionality
 
 ---
+
+## 2026-02-18 20:12 EST - US-007: Integrate state manager with Scraper crash handling
+- Added StateManager integration to Scraper class:
+  - New initialization options: `state_manager` instance or `state_filepath` string
+  - `state_manager` property to access the StateManager instance
+  - `_register_atexit_handler()` registers emergency save on process exit (SIGINT/SIGTERM)
+  - `save_state_on_exception()` saves state before raising exceptions
+  - `resume_from_state(filepath)` loads state from JSON and restores position
+  - `clear_state(filepath)` deletes state file on successful completion
+- Modified `fetch()` to update state URL and save state on exception before re-raising
+- Modified `scrape()` to update state URL, clear state on success, and save state on exception
+- Exported `StateManager` from `trader` package in `__init__.py`
+- Added 20 comprehensive tests in `TestScraperStateManagerIntegration`:
+  - Default and custom state manager initialization
+  - State updates during fetch operations
+  - State save on fetch/scrape exceptions (crash recovery)
+  - State file cleared on successful scrape completion
+  - Resume from state functionality (with and without custom filepath)
+  - Clear state functionality (with and without custom filepath)
+  - Full crash recovery workflow simulation
+  - Integration with circuit breaker and retry decorator
+- All 136 tests pass (19 circuit breaker + 29 retry + 31 state + 57 trader)
+- Syntax validation passes
+- Files changed: `trader/scraper.py`, `trader/__init__.py`, `tests/test_trader.py`
+- **Learnings:** atexit handlers are registered in `__init__` for emergency saves; scraper integrates all three layers: circuit breaker (outer) → retry (inner) → state persistence (crash recovery); state file cleared on success prevents stale state issues
+
+---
