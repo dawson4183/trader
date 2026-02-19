@@ -51,6 +51,23 @@
 - Tests pass: pytest tests/test_validators.py -k deduplicate passes (9 tests)
 - All 27 validator tests pass
 
+#### Story 6.0: Create ItemParser class with validation integration
+- Created trader/item_parser.py with ItemParser class
+- ItemParser.__init__ accepts config with required_selectors list
+- ItemParser.parse() method validates HTML structure before parsing
+- ItemParser.parse() validates each item's price during extraction
+- ItemParser.parse() deduplicates items after extraction
+- ItemParser.parse() raises ValidationError if HTML structure invalid
+- ItemParser.parse() raises ValidationError if any price invalid
+- ItemParser._extract_items() uses BeautifulSoup to extract items from HTML
+- ItemParser._extract_item_data() extracts item attributes from HTML elements
+- Supports data attributes (data-item-hash, data-price, data-name) for extraction
+- Auto-generates item_hash from item name if not provided
+- Typecheck passes: mypy trader/item_parser.py returns no errors
+- Created comprehensive tests in tests/test_item_parser.py (15 tests)
+- Tests for ItemParser pass: pytest tests/test_item_parser.py passes
+- All 71 tests pass across entire test suite
+
 ### Codebase Patterns
 
 #### Project Structure
