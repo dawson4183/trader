@@ -1,18 +1,21 @@
 """Tests for the alert module.
 
 Tests the send_alert function with mocked webhook responses
-to verify correct behavior for various scenarios.
+to verify correct behavior for various scenarios. Also tests
+logging integration to verify alerts are logged with appropriate levels.
 """
 
 import json
+import logging
 import os
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from typing import Generator
+from typing import Generator, List
 from unittest.mock import MagicMock, patch
 import pytest
 
-from trader.alert import send_alert
+from trader.alert import send_alert, LEVEL_TO_LOGGING
 
 
 class TestSendAlert:
@@ -99,7 +102,7 @@ class TestSendAlert:
                 "http://example.com/webhook",
                 404,
                 "Not Found",
-                {},
+                None,  # type: ignore[arg-type]
                 None,
             )
             mock_urlopen.side_effect = mock_error
@@ -116,7 +119,7 @@ class TestSendAlert:
                 "http://example.com/webhook",
                 500,
                 "Internal Server Error",
-                {},
+                None,  # type: ignore[arg-type]
                 None,
             )
             mock_urlopen.side_effect = mock_error
@@ -134,7 +137,7 @@ class TestSendAlert:
                 "http://example.com/webhook",
                 204,
                 "No Content",
-                {},
+                None,  # type: ignore[arg-type]
                 None,
             )
             mock_urlopen.side_effect = mock_error
@@ -148,7 +151,7 @@ class TestSendAlert:
         os.environ["WEBHOOK_URL"] = "http://example.com/webhook"
 
         with patch("urllib.request.urlopen") as mock_urlopen:
-            mock_error = urllib.request.URLError("Connection refused")
+            mock_error = urllib.error.URLError("Connection refused")
             mock_urlopen.side_effect = mock_error
 
             result = send_alert("Test message", "error")
@@ -179,7 +182,7 @@ class TestSendAlert:
             payload = json.loads(request.data.decode("utf-8"))
             assert payload["message"] == "Test message"
             assert payload["level"] == "warning"
-            assert payload["source"] == "trader"
+            assert payload["source"] == "trader.alert"
             assert "timestamp" in payload
 
     def test_payload_has_iso_timestamp(self) -> None:
@@ -288,3 +291,181 @@ class TestSendAlert:
             call_args = mock_urlopen.call_args
             request = call_args[0][0]
             assert request.full_url == "https://hooks.example.com/alerts"
+
+
+class TestAlertLogging:
+    """Tests for alert logging integration."""
+
+    def setup_method(self) -> None:
+        """Clear WEBHOOK_URL before each test."""
+        if "WEBHOOK_URL" in os.environ:
+            del os.environ["WEBHOOK_URL"]
+
+    def teardown_method(self) -> None:
+        """Clear WEBHOOK_URL after each test."""
+        if "WEBHOOK_URL" in os.environ:
+            del os.environ["WEBHOOK_URL"]
+
+    def test_critical_level_logs_at_critical(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that level 'critical' logs at logging.CRITICAL."""
+        os.environ["WEBHOOK_URL"] = "http://example.com/webhook"
+        caplog.set_level(logging.CRITICAL)
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_response.__enter__ = MagicMock(return_value=mock_response)
+            mock_response.__exit__ = MagicMock(return_value=None)
+            mock_urlopen.return_value = mock_response
+
+            send_alert("Critical test message", "critical")
+
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.CRITICAL
+
+    def test_error_level_logs_at_error(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that level 'error' logs at logging.ERROR."""
+        os.environ["WEBHOOK_URL"] = "http://example.com/webhook"
+        caplog.set_level(logging.ERROR)
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_response.__enter__ = MagicMock(return_value=mock_response)
+            mock_response.__exit__ = MagicMock(return_value=None)
+            mock_urlopen.return_value = mock_response
+
+            send_alert("Error test message", "error")
+
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.ERROR
+
+    def test_warning_level_logs_at_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that level 'warning' logs at logging.WARNING."""
+        os.environ["WEBHOOK_URL"] = "http://example.com/webhook"
+        caplog.set_level(logging.WARNING)
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_response.__enter__ = MagicMock(return_value=mock_response)
+            mock_response.__exit__ = MagicMock(return_value=None)
+            mock_urlopen.return_value = mock_response
+
+            send_alert("Warning test message", "warning")
+
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.WARNING
+
+    def test_info_level_logs_at_info(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that level 'info' logs at logging.INFO."""
+        os.environ["WEBHOOK_URL"] = "http://example.com/webhook"
+        caplog.set_level(logging.INFO)
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_response.__enter__ = MagicMock(return_value=mock_response)
+            mock_response.__exit__ = MagicMock(return_value=None)
+            mock_urlopen.return_value = mock_response
+
+            send_alert("Info test message", "info")
+
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.INFO
+
+    def test_log_message_contains_alert_level(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that log message contains the alert level."""
+        os.environ["WEBHOOK_URL"] = "http://example.com/webhook"
+        caplog.set_level(logging.INFO)
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_response.__enter__ = MagicMock(return_value=mock_response)
+            mock_response.__exit__ = MagicMock(return_value=None)
+            mock_urlopen.return_value = mock_response
+
+            send_alert("Test message", "error")
+
+        assert "[ALERT ERROR]" in caplog.records[0].message
+
+    def test_log_message_contains_alert_text(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that log message contains the alert text."""
+        os.environ["WEBHOOK_URL"] = "http://example.com/webhook"
+        caplog.set_level(logging.INFO)
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_response.__enter__ = MagicMock(return_value=mock_response)
+            mock_response.__exit__ = MagicMock(return_value=None)
+            mock_urlopen.return_value = mock_response
+
+            send_alert("Database connection failed", "critical")
+
+        assert "Database connection failed" in caplog.records[0].message
+
+    def test_log_has_source_module_name(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that log record has source module name."""
+        os.environ["WEBHOOK_URL"] = "http://example.com/webhook"
+        caplog.set_level(logging.INFO)
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_response = MagicMock()
+            mock_response.status = 200
+            mock_response.__enter__ = MagicMock(return_value=mock_response)
+            mock_response.__exit__ = MagicMock(return_value=None)
+            mock_urlopen.return_value = mock_response
+
+            send_alert("Test message", "info")
+
+        assert caplog.records[0].name == "trader.alert"
+
+    def test_logs_before_webhook_call(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that logging occurs before webhook call."""
+        os.environ["WEBHOOK_URL"] = "http://example.com/webhook"
+        caplog.set_level(logging.INFO)
+        webhook_times: List[int] = []
+
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            def capture_log_and_call(*args: object, **kwargs: object) -> MagicMock:
+                webhook_times.append(1)
+                mock_response = MagicMock()
+                mock_response.status = 200
+                mock_response.__enter__ = MagicMock(return_value=mock_response)
+                mock_response.__exit__ = MagicMock(return_value=None)
+                return mock_response
+
+            mock_urlopen.side_effect = lambda request: capture_log_and_call()
+
+            send_alert("Test message", "warning")
+
+        # Verify log was created
+        assert len(caplog.records) == 1
+
+    def test_no_logs_when_invalid_level(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that no logs are created when level is invalid."""
+        os.environ["WEBHOOK_URL"] = "http://example.com/webhook"
+        caplog.set_level(logging.DEBUG)
+
+        send_alert("Test message", "invalid")  # type: ignore[arg-type]
+
+        # No logs should be created since we return early
+        assert len(caplog.records) == 0
+
+    def test_no_logs_when_no_webhook_url(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that no logs are created when WEBHOOK_URL is not set."""
+        caplog.set_level(logging.DEBUG)
+
+        send_alert("Test message", "info")
+
+        # No logs should be created since we return early
+        assert len(caplog.records) == 0
+
+    def test_level_mapping_is_correct(self) -> None:
+        """Test that LEVEL_TO_LOGGING mapping is correct."""
+        assert LEVEL_TO_LOGGING["critical"] == logging.CRITICAL
+        assert LEVEL_TO_LOGGING["error"] == logging.ERROR
+        assert LEVEL_TO_LOGGING["warning"] == logging.WARNING
+        assert LEVEL_TO_LOGGING["info"] == logging.INFO
