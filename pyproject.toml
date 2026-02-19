@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "trader"
 version = "0.1.0"
 description = "Item parser with data validation"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = [
     "beautifulsoup4>=4.9.0",
     "lxml>=4.6.0",
@@ -26,7 +26,7 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
