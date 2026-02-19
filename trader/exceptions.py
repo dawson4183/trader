@@ -30,3 +30,40 @@ class ValidationError(Exception):
         trader.exceptions.ValidationError: Price must be greater than 0
     """
     pass
+
+
+class MaxRetriesExceededError(Exception):
+    """Exception raised when all retry attempts are exhausted.
+    
+    This exception is raised by the retry decorator when the maximum
+    number of retry attempts has been reached without success.
+    
+    Attributes:
+        message: Explanation of the failure.
+        __cause__: The original exception that caused the final failure.
+    
+    Example:
+        >>> raise MaxRetriesExceededError("Operation failed after 5 attempts")
+        Traceback (most recent call last):
+          ...
+        trader.exceptions.MaxRetriesExceededError: Operation failed after 5 attempts
+    """
+    pass
+
+
+class CircuitOpenError(Exception):
+    """Exception raised when circuit breaker is open.
+    
+    This exception is raised by the circuit breaker when it is in
+    the OPEN state and rejects further calls.
+    
+    Attributes:
+        message: Explanation including failure count and threshold.
+    
+    Example:
+        >>> raise CircuitOpenError("Circuit breaker is OPEN after 10 failures")
+        Traceback (most recent call last):
+          ...
+        trader.exceptions.CircuitOpenError: Circuit breaker is OPEN after 10 failures
+    """
+    pass

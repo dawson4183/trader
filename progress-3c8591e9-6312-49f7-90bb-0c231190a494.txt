@@ -1,0 +1,56 @@
+# Progress Log: Health Checks and Alerts
+
+Run ID: 3c8591e9-6312-49f7-90bb-0c231190a494
+
+## Story 12.0: Add alert integration tests
+
+**Status:** COMPLETED
+
+**Changes:**
+- Created `trader/alert.py` with `send_alert(message, level)` function
+- Implemented webhook POST with JSON payload containing message, level, timestamp, source
+- Added timeout handling (30s default) returning False on timeout
+- Added webhook failure handling (4xx/5xx responses return False)
+- Added logging integration with appropriate log levels per alert level
+
+**Tests:**
+- All 16 tests in `tests/test_alert_integration.py` pass:
+  - `test_webhook_receives_request` - verifies webhook receives POST
+  - `test_webhook_receives_correct_payload_structure` - message, level, timestamp, source fields
+  - `test_webhook_payload_has_correct_values` - correct data in payload
+  - `test_webhook_payload_has_iso_timestamp` - ISO format timestamp
+  - `test_webhook_receives_different_levels` - info, warning, error, critical
+  - `test_webhook_custom_path` - uses /webhook path
+  - `test_returns_false_on_4xx_error` - 404 returns False
+  - `test_returns_false_on_400_bad_request` - 400 returns False
+  - `test_returns_false_on_5xx_error` - 500 returns False
+  - `test_returns_false_on_503_service_unavailable` - 503 returns False
+  - `test_returns_true_on_2xx_success` - 201 returns True
+  - `test_returns_true_on_204_no_content` - 204 returns True
+  - `test_returns_false_on_timeout` - timeout returns False
+  - `test_logs_alert_before_webhook_call` - logging works
+  - `test_logs_even_on_webhook_failure` - logs on failure too
+  - `test_logs_critical_at_critical_level` - critical level logging
+
+**Commit:** dc1a9d3 - feat: 12.0 - Add alert integration tests
+
+## Codebase Patterns
+
+### Webhook Pattern for Integration Tests
+- Use `HTTPServer` with `BaseHTTPRequestHandler` to mock webhook server
+- Run server in daemon thread to avoid blocking
+- Use random port via `HTTPServer(("127.0.0.1", 0), ...)` for isolation
+- Store received requests in a class variable for assertions
+- Configure response behavior via class variables (status, delay)
+
+### Alert Module Design
+- Accept message and level parameters
+- Return bool indicating webhook success
+- Gracefully handle missing webhook URL (returns True if only logging)
+- Use ISO 8601 timestamp with timezone.utc
+- Include source field for traceability
+- Log at appropriate level: info/warning/error/critical
+
+## Type Checking
+- `trader/alert.py` passes mypy checks
+- Pre-existing mypy errors in `trader/scraper.py` are unrelated to this change
