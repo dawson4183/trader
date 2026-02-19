@@ -287,3 +287,142 @@ def insert_items_batch(
                 total_duplicates += len(batch) - batch_inserted
 
     return (total_inserted, total_duplicates)
+
+
+class DatabaseManager:
+    """High-level database manager with connection pooling and batch operations.
+
+    The DatabaseManager encapsulates the ConnectionPool and provides
+    convenience methods for common database operations. It integrates
+    with StateManager for crash recovery during batch operations.
+
+    Attributes:
+        db_path: Path to the SQLite database file.
+        max_connections: Maximum number of concurrent connections allowed.
+        batch_size: Default batch size for batch insert operations.
+        pool: The underlying ConnectionPool instance.
+    """
+
+    def __init__(
+        self,
+        db_path: str,
+        max_connections: int = 5,
+        batch_size: int = 100
+    ) -> None:
+        """Initialize the database manager.
+
+        Args:
+            db_path: Path to the SQLite database file.
+            max_connections: Maximum number of concurrent connections allowed.
+            batch_size: Default batch size for batch insert operations.
+        """
+        self.db_path: str = db_path
+        self.max_connections: int = max_connections
+        self.batch_size: int = batch_size
+        self._pool: ConnectionPool = ConnectionPool(db_path, max_connections)
+
+    @property
+    def connection_pool(self) -> ConnectionPool:
+        """Return the underlying ConnectionPool instance."""
+        return self._pool
+
+    def insert_items_batch(
+        self,
+        items: List[Dict[str, Any]],
+        batch_size: Optional[int] = None,
+        state_manager: Optional[Any] = None
+    ) -> Tuple[int, int]:
+        """Insert items into the database in batches using INSERT OR IGNORE.
+
+        Batches items into groups of specified size and inserts them into
+        the items table. Uses INSERT OR IGNORE to handle duplicates without
+        raising errors. Each batch is wrapped in a transaction.
+
+        If state_manager is provided, it will be used for crash recovery:
+        - State is saved before starting batch inserts
+        - State is updated after each successful batch
+        - State is saved on exception for crash recovery
+
+        Args:
+            items: List of item dictionaries with keys 'name', 'price', 'url'.
+            batch_size: Number of items to insert per batch. Uses 
+                instance default if None.
+            state_manager: Optional StateManager for crash recovery. If
+                provided, state will be saved before and during batch
+                operations.
+
+        Returns:
+            A tuple of (inserted_count, duplicate_count) where:
+            - inserted_count: Number of rows actually inserted
+            - duplicate_count: Number of rows skipped due to duplicates
+        """
+        from .state import StateManager
+
+        use_batch_size = batch_size if batch_size is not None else self.batch_size
+
+        if not items:
+            return (0, 0)
+
+        # Save initial state if StateManager provided
+        if state_manager is not None:
+            state_manager.save()
+
+        total_inserted = 0
+        total_duplicates = 0
+
+        try:
+            # Process items in batches
+            for i in range(0, len(items), use_batch_size):
+                batch = items[i:i + use_batch_size]
+                
+                with self._pool as conn:
+                    with Transaction(conn) as cursor:
+                        # Build the INSERT OR IGNORE query with placeholders
+                        placeholders = ', '.join(['(?, ?, ?)'] * len(batch))
+                        query = f"INSERT OR IGNORE INTO items (name, price, url) VALUES {placeholders}"
+                        
+                        # Flatten the batch data into a single list of values
+                        values: List[Any] = []
+                        for item in batch:
+                            values.append(item.get('name'))
+                            values.append(item.get('price'))
+                            values.append(item.get('url'))
+                        
+                        cursor.execute(query, values)
+                        batch_inserted = cursor.rowcount
+                        total_inserted += batch_inserted
+                        total_duplicates += len(batch) - batch_inserted
+                
+                # Update state manager after each batch
+                if state_manager is not None:
+                    for _ in batch:
+                        state_manager.record_item()
+
+        except Exception:
+            # Save state on crash for recovery
+            if state_manager is not None:
+                state_manager.save_on_crash()
+            raise
+
+        return (total_inserted, total_duplicates)
+
+    def close(self) -> None:
+        """Close the database manager and shutdown the connection pool."""
+        self._pool.close()
+
+    def __enter__(self) -> "DatabaseManager":
+        """Context manager entry - return self."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[object]
+    ) -> None:
+        """Context manager exit - close the pool."""
+        self.close()
+
+    def __del__(self) -> None:
+        """Destructor to ensure the pool is closed."""
+        self.close()
