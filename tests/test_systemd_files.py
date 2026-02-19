@@ -114,6 +114,88 @@ class TestServiceFileStructure:
             pytest.skip("systemd-analyze timed out")
 
 
+class TestTimerFileStructure:
+    """Tests for the systemd timer file structure and syntax."""
+    
+    @pytest.fixture
+    def timer_file_path(self):
+        """Return the path to the timer file."""
+        repo_root = Path(__file__).parent.parent
+        return repo_root / "systemd" / "d2iabot-scraper.timer"
+    
+    @pytest.fixture
+    def timer_content(self, timer_file_path):
+        """Return the content of the timer file."""
+        with open(timer_file_path, 'r') as f:
+            return f.read()
+    
+    def test_timer_file_exists(self, timer_file_path):
+        """Test that the timer file exists."""
+        assert timer_file_path.exists(), f"Timer file not found at {timer_file_path}"
+    
+    def test_timer_unit_section_exists(self, timer_content):
+        """Test that [Unit] section exists with Description."""
+        assert "[Unit]" in timer_content, "Missing [Unit] section"
+        
+        # Check for Description
+        description_pattern = r'^Description=.+$'
+        assert re.search(description_pattern, timer_content, re.MULTILINE), \
+            "Missing or invalid Description in [Unit]"
+    
+    def test_timer_section_exists(self, timer_content):
+        """Test that [Timer] section exists."""
+        assert "[Timer]" in timer_content, "Missing [Timer] section"
+    
+    def test_timer_on_boot_sec(self, timer_content):
+        """Test that OnBootSec=1min is set."""
+        onboot_pattern = r'^OnBootSec=1min$'
+        assert re.search(onboot_pattern, timer_content, re.MULTILINE), \
+            "Missing or invalid 'OnBootSec=1min' in [Timer]"
+    
+    def test_timer_on_unit_active_sec(self, timer_content):
+        """Test that OnUnitActiveSec=15min is set."""
+        active_pattern = r'^OnUnitActiveSec=15min$'
+        assert re.search(active_pattern, timer_content, re.MULTILINE), \
+            "Missing or invalid 'OnUnitActiveSec=15min' in [Timer]"
+    
+    def test_timer_persistent(self, timer_content):
+        """Test that Persistent=true is set."""
+        persistent_pattern = r'^Persistent=true$'
+        assert re.search(persistent_pattern, timer_content, re.MULTILINE), \
+            "Missing or invalid 'Persistent=true' in [Timer]"
+    
+    def test_timer_unit_reference(self, timer_content):
+        """Test that Unit=d2iabot-scraper.service is specified."""
+        unit_pattern = r'^Unit=d2iabot-scraper\.service$'
+        assert re.search(unit_pattern, timer_content, re.MULTILINE), \
+            "Missing or invalid 'Unit=d2iabot-scraper.service' in [Timer]"
+    
+    def test_timer_install_section_exists(self, timer_content):
+        """Test that [Install] section exists with WantedBy."""
+        assert "[Install]" in timer_content, "Missing [Install] section"
+        assert "WantedBy=timers.target" in timer_content, \
+            "Missing 'WantedBy=timers.target' in [Install]"
+    
+    def test_timer_file_syntax_valid(self, timer_file_path):
+        """Test that timer file syntax is valid using systemd-analyze."""
+        # Skip if systemd-analyze is not available
+        try:
+            result = subprocess.run(
+                ['systemd-analyze', 'verify', str(timer_file_path)],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            # systemd-analyze verify returns 0 on success
+            # Some warnings are acceptable, but no errors
+            assert result.returncode == 0, \
+                f"Timer file has syntax errors: {result.stderr}"
+        except FileNotFoundError:
+            pytest.skip("systemd-analyze not available on this system")
+        except subprocess.TimeoutExpired:
+            pytest.skip("systemd-analyze timed out")
+
+
 class TestSystemdDirectoryStructure:
     """Tests for the systemd directory structure."""
     
@@ -132,3 +214,8 @@ class TestSystemdDirectoryStructure:
         """Test that service file is in systemd/ directory."""
         service_file = repo_root / "systemd" / "d2iabot-scraper.service"
         assert service_file.exists(), "d2iabot-scraper.service not found in systemd/"
+    
+    def test_timer_file_in_systemd_dir(self, repo_root):
+        """Test that timer file is in systemd/ directory."""
+        timer_file = repo_root / "systemd" / "d2iabot-scraper.timer"
+        assert timer_file.exists(), "d2iabot-scraper.timer not found in systemd/"
