@@ -1,9 +1,9 @@
 """Error handling utilities with retry decorator and circuit breaker."""
 import time
 import functools
-from typing import Callable, Any, TypeVar, Optional, List, Type
+from typing import Callable, Any, TypeVar, Optional, Tuple, Type
 from enum import Enum, auto
-from .exceptions import ValidationError
+from .exceptions import ValidationError, MaxRetriesExceededError
 
 
 F = TypeVar('F', bound=Callable[..., Any])
@@ -78,25 +78,25 @@ class CircuitBreaker:
 
 def retry(
     max_attempts: int = 3,
+    exceptions: Tuple[Type[Exception], ...] = (Exception,),
     delay: float = 1.0,
     backoff: float = 2.0,
-    exceptions: Optional[List[Type[Exception]]] = None
 ) -> Callable[[F], F]:
     """
     Retry decorator with exponential backoff.
     
     Args:
         max_attempts: Maximum number of retry attempts
+        exceptions: Tuple of exception types to catch and retry on
         delay: Initial delay between retries (seconds)
         backoff: Multiplier for delay after each retry
-        exceptions: List of exception types to catch and retry on
         
     Returns:
         Decorated function with retry logic
+        
+    Raises:
+        MaxRetriesExceededError: When all retry attempts are exhausted
     """
-    if exceptions is None:
-        exceptions = [Exception]
-    
     def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -106,17 +106,16 @@ def retry(
             for attempt in range(max_attempts):
                 try:
                     return func(*args, **kwargs)
-                except tuple(exceptions) as e:
+                except exceptions as e:
                     last_exception = e
                     if attempt < max_attempts - 1:
                         time.sleep(current_delay)
                         current_delay *= backoff
             
             # All retries exhausted
-            if last_exception:
-                raise last_exception
-            
-            raise ValidationError("Retry failed with no exception captured")
+            raise MaxRetriesExceededError(
+                f"Function failed after {max_attempts} attempts"
+            ) from last_exception
         
         return wrapper  # type: ignore
     
@@ -135,8 +134,8 @@ class RetryWithCircuitBreaker:
     ):
         self.retry_decorator = retry(
             max_attempts=max_attempts,
+            exceptions=(Exception,),
             delay=delay,
-            exceptions=[Exception]
         )
         self.circuit_breaker = CircuitBreaker(
             failure_threshold=failure_threshold,
