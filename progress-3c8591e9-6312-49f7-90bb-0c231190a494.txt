@@ -238,3 +238,75 @@ result = check_database_connection()
 - All 12 health check tests pass
 - mypy typecheck passes
 - All 127 tests in test suite pass
+
+### Story 5.0: Add check_scraper_status() to health_check.py
+- Status: COMPLETED
+- Commit: feat: 5.0 - Add check_scraper_status() to health_check.py
+- Files Modified:
+  - trader/health_check.py: Added check_scraper_status() function
+  - tests/test_health_check.py: Added tests for check_scraper_status()
+
+**Function: check_scraper_status(db_path)**
+- Returns dict with 'status': 'ok'|'error'|'idle', 'last_run_at', 'last_run_status', 'consecutive_failures'
+- Fetches most recent scraper run from scraper_runs table
+- Counts consecutive failures from last 5 runs (stops on first non-failed run)
+- Returns 'error' status if consecutive_failures >= 3 (takes precedence)
+- Returns 'idle' status if no runs in last 24 hours
+- Returns 'ok' status if recent run and fewer than 3 consecutive failures
+
+**Consecutive Failure Counting Logic:**
+- Queries last 5 runs ordered by started_at DESC
+- Counts from most recent, stops at first non-failed run
+- Resets count on successful run (completed or running)
+
+**24-Hour Idle Detection:**
+- Parses timestamp as SQLite format 'YYYY-MM-DD HH:MM:SS'
+- Compares against current UTC time
+- Assumes UTC timezone for timestamp parsing
+
+**Test Coverage (14 tests):**
+- test_function_exists
+- test_returns_dict
+- test_returns_status_key
+- test_returns_last_run_at_key
+- test_returns_last_run_status_key
+- test_returns_consecutive_failures_key
+- test_idle_status_when_no_runs
+- test_fetches_most_recent_run
+- test_counts_consecutive_failures_in_last_5_runs
+- test_error_status_when_consecutive_failures_gte_3
+- test_idle_status_when_no_runs_in_last_24_hours
+- test_ok_status_when_recent_run
+- test_error_takes_precedence_over_idle
+- test_returns_timestamp_in_last_run_at
+
+**Test Results:**
+- All 26 health check tests pass
+- mypy typecheck passes
+- All 141 tests in test suite pass
+
+**Codebase Patterns Added:**
+
+### Pattern: Scraper Health Check
+```python
+from trader.health_check import check_scraper_status
+
+# Check scraper health
+result = check_scraper_status()
+# Returns: {
+#   'status': 'ok' | 'error' | 'idle',
+#   'last_run_at': '2024-01-15 10:30:00',
+#   'last_run_status': 'completed',
+#   'consecutive_failures': 0
+# }
+
+# Check specific database
+result = check_scraper_status('/path/to/db.sqlite')
+```
+
+**Guidelines:**
+- Always ensure tables exist before querying (use create_tables())
+- Handle both SQLite and ISO timestamp formats
+- Count consecutive failures from most recent run
+- Error status takes precedence over idle
+- Handle exceptions gracefully and return error status
