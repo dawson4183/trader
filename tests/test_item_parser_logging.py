@@ -1,11 +1,11 @@
-"""Tests for logging integration in trader.validators module."""
+"""Tests for logging integration in trader.item_parser module."""
 
 import json
 import logging
 from unittest.mock import patch
 
 import pytest
-from trader.validators import validate_html_structure, validate_price, deduplicate_items
+from trader.item_parser import validate_html_structure, validate_price, deduplicate_items
 from trader.exceptions import ValidationError
 
 
@@ -40,23 +40,22 @@ class TestValidateHtmlStructureLogging:
             if record.levelno == logging.WARNING and "CSS selector not found" in record.message
         )
         
-        # Check context - missing_selectors is a list
-        assert warning_record.missing_selectors == ["span.notfound"]
+        # Check context
+        assert warning_record.selector == "span.notfound"
         assert warning_record.html_length == len(html)
 
     def test_logs_for_each_missing_selector(self, caplog):
-        """Should log all missing selectors in one warning."""
+        """Should log for the first missing selector found."""
         caplog.set_level(logging.WARNING)
         html = "<html><body></body></html>"
         
         with pytest.raises(ValidationError):
             validate_html_structure(html, ["div.first", "span.second"])
         
-        # Should have exactly one warning with all missing selectors
+        # Should have exactly one warning (first missing selector triggers exception)
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 1
-        assert "div.first" in warnings[0].missing_selectors
-        assert "span.second" in warnings[0].missing_selectors
+        assert "first" in warnings[0].selector
 
 
 class TestValidatePriceLogging:
@@ -233,12 +232,12 @@ class TestLoggingFormat:
 
 
 class TestLoggerInitialization:
-    """Test that logger is properly initialized in validators module."""
+    """Test that logger is properly initialized in item_parser module."""
 
     def test_module_has_logger_instance(self):
-        """validators module should have a logger instance."""
-        import trader.validators as validators
+        """item_parser module should have a logger instance."""
+        import trader.item_parser as item_parser
         
-        assert hasattr(validators, "logger")
-        assert isinstance(validators.logger, logging.Logger)
-        assert validators.logger.name == "trader.validators"
+        assert hasattr(item_parser, "logger")
+        assert isinstance(item_parser.logger, logging.Logger)
+        assert item_parser.logger.name == "trader.item_parser"

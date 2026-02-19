@@ -1,56 +1,106 @@
-# Progress Log: Health Checks and Alerts
+# Progress Log for Run: 3c8591e9-6312-49f7-90bb-0c231190a494
+# Branch: feature/health-checks-alerts
 
-Run ID: 3c8591e9-6312-49f7-90bb-0c231190a494
+## Stories Completed
 
-## Story 12.0: Add alert integration tests
+### Story 2.0: Create database schema for health tracking
+- Status: COMPLETED
+- Commit: feat: 2.0 - Create database schema for health tracking
+- Files Added:
+  - trader/schema.py: Schema management with create_tables(), drop_tables(), table_exists(), get_table_schema()
+  - tests/test_schema.py: Comprehensive tests for schema functionality
+- Files Modified:
+  - trader/database.py: Added PRAGMA query support for schema inspection
 
-**Status:** COMPLETED
+## Implementation Summary
 
-**Changes:**
-- Created `trader/alert.py` with `send_alert(message, level)` function
-- Implemented webhook POST with JSON payload containing message, level, timestamp, source
-- Added timeout handling (30s default) returning False on timeout
-- Added webhook failure handling (4xx/5xx responses return False)
-- Added logging integration with appropriate log levels per alert level
+### Schema Features:
+1. `create_tables()` - Idempotent function to create all schema tables
+2. `drop_tables()` - Function to drop all schema tables
+3. `table_exists()` - Check if a specific table exists
+4. `get_table_schema()` - Get column information for a table
 
-**Tests:**
-- All 16 tests in `tests/test_alert_integration.py` pass:
-  - `test_webhook_receives_request` - verifies webhook receives POST
-  - `test_webhook_receives_correct_payload_structure` - message, level, timestamp, source fields
-  - `test_webhook_payload_has_correct_values` - correct data in payload
-  - `test_webhook_payload_has_iso_timestamp` - ISO format timestamp
-  - `test_webhook_receives_different_levels` - info, warning, error, critical
-  - `test_webhook_custom_path` - uses /webhook path
-  - `test_returns_false_on_4xx_error` - 404 returns False
-  - `test_returns_false_on_400_bad_request` - 400 returns False
-  - `test_returns_false_on_5xx_error` - 500 returns False
-  - `test_returns_false_on_503_service_unavailable` - 503 returns False
-  - `test_returns_true_on_2xx_success` - 201 returns True
-  - `test_returns_true_on_204_no_content` - 204 returns True
-  - `test_returns_false_on_timeout` - timeout returns False
-  - `test_logs_alert_before_webhook_call` - logging works
-  - `test_logs_even_on_webhook_failure` - logs on failure too
-  - `test_logs_critical_at_critical_level` - critical level logging
+### Tables Created:
 
-**Commit:** dc1a9d3 - feat: 12.0 - Add alert integration tests
+#### scraper_runs
+- id: INTEGER PRIMARY KEY AUTOINCREMENT
+- started_at: TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+- ended_at: TIMESTAMP (nullable)
+- status: TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed'))
+- items_count: INTEGER DEFAULT 0
+
+#### scraper_failures
+- id: INTEGER PRIMARY KEY AUTOINCREMENT
+- run_id: INTEGER NOT NULL (foreign key to scraper_runs.id)
+- error_message: TEXT NOT NULL
+- level: TEXT NOT NULL CHECK(level IN ('warning', 'error', 'critical'))
+- occurred_at: TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+- Foreign key constraint with ON DELETE CASCADE
+
+#### health_checks
+- id: INTEGER PRIMARY KEY AUTOINCREMENT
+- check_type: TEXT NOT NULL
+- status: TEXT NOT NULL CHECK(status IN ('healthy', 'unhealthy'))
+- details: TEXT (nullable)
+- checked_at: TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+
+### Indexes Created:
+- idx_scraper_runs_status
+- idx_scraper_runs_started_at
+- idx_scraper_failures_run_id
+- idx_scraper_failures_occurred_at
+- idx_health_checks_type
+- idx_health_checks_checked_at
+
+### Test Coverage (29 tests in test_schema.py):
+- TestCreateTables: 11 tests (table creation, idempotency, columns, foreign keys, indexes)
+- TestDropTables: 2 tests (drop all, safe on empty)
+- TestTableExists: 2 tests (exists true/false)
+- TestGetTableSchema: 2 tests (returns columns, empty for nonexistent)
+- TestDataOperations: 10 tests (inserts, constraints, foreign keys, cascade delete)
+- TestIntegrationWithContextManager: 2 tests (context manager usage)
 
 ## Codebase Patterns
 
-### Webhook Pattern for Integration Tests
-- Use `HTTPServer` with `BaseHTTPRequestHandler` to mock webhook server
-- Run server in daemon thread to avoid blocking
-- Use random port via `HTTPServer(("127.0.0.1", 0), ...)` for isolation
-- Store received requests in a class variable for assertions
-- Configure response behavior via class variables (status, delay)
+### Schema Pattern:
+```python
+def create_tables(db: Optional[DatabaseConnection] = None) -> None:
+    if db is None:
+        db = DatabaseConnection()
+    
+    # Create tables with IF NOT EXISTS (idempotent)
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS table_name (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ...
+        )
+    """)
+    
+    # Create indexes
+    db.execute("CREATE INDEX IF NOT EXISTS idx_name ON table_name(column)")
+```
 
-### Alert Module Design
-- Accept message and level parameters
-- Return bool indicating webhook success
-- Gracefully handle missing webhook URL (returns True if only logging)
-- Use ISO 8601 timestamp with timezone.utc
-- Include source field for traceability
-- Log at appropriate level: info/warning/error/critical
+### CHECK Constraint Pattern:
+```sql
+status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'failed'))
+```
 
-## Type Checking
-- `trader/alert.py` passes mypy checks
-- Pre-existing mypy errors in `trader/scraper.py` are unrelated to this change
+### Foreign Key Pattern:
+```sql
+run_id INTEGER NOT NULL,
+FOREIGN KEY (run_id) REFERENCES scraper_runs(id) ON DELETE CASCADE
+```
+
+### PRAGMA Query Pattern (for schema inspection):
+```python
+# PRAGMA queries return results like SELECT
+schema = db.execute(f"PRAGMA table_info({table_name})")
+fk_info = db.execute("PRAGMA foreign_key_list(scraper_failures)")
+```
+
+## Test Results
+- All 29 schema tests pass
+- Typecheck passes (mypy)
+
+## Stories Remaining
+- Story 3.0-11.0: Additional stories for health checks and alerts
