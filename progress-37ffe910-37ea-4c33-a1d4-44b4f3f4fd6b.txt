@@ -1,0 +1,84 @@
+# Progress Log
+
+## Run ID: 37ffe910-37ea-4c33-a1d4-44b4f3f4fd6b
+
+### Completed Stories
+
+#### Story 1.0: Set up test infrastructure and trader/tests/ directory structure
+- Created trader/tests/ directory with __init__.py
+- Created trader/tests/conftest.py with shared pytest fixtures:
+  - sample_html_basic - Basic HTML with item structure
+  - sample_html_no_price - HTML without price element
+  - sample_html_no_title - HTML without title element
+  - sample_html_empty - Empty HTML fixture
+  - sample_html_invalid - Malformed HTML fixture
+  - sample_html_multiple_items - HTML with multiple items
+  - sample_selectors - Standard CSS selectors dict
+  - sample_item - Sample parsed item dict
+  - sample_items_list - List of items for deduplication testing
+  - price_strings_valid - Valid price strings with expected values
+  - price_strings_invalid - Invalid price strings for error testing
+- Created trader/tests/test_infrastructure.py to verify fixtures work
+- Updated pyproject.toml to use Python 3.9+ (was 3.8)
+- pytest discovers tests in trader/tests/ successfully (13 tests)
+- Typecheck passes with mypy
+
+#### Story 2.0: Implement parse_item() function in trader/parser.py
+- Created trader/parser.py with parse_item() function:
+  - Extracts item_name from HTML with .item-name selector
+  - Extracts price from HTML with .price selector
+  - Extracts item_hash from HTML with data-hash attribute
+  - Raises ValidationError for malformed/empty HTML
+  - Raises ValidationError for missing required elements
+- Created validate_html_structure() function in trader/parser.py:
+  - Validates HTML contains .item-name element
+  - Validates HTML contains .price element
+  - Validates HTML contains data-hash attribute
+- Added parser-specific fixtures to conftest.py:
+  - parser_html_basic - Valid HTML with all required elements
+  - parser_html_no_item_name - HTML without .item-name
+  - parser_html_no_price - HTML without .price
+  - parser_html_no_data_hash - HTML without data-hash
+  - parser_html_empty_hash - HTML with empty data-hash
+  - parser_html_empty - Empty HTML
+  - parser_html_whitespace - Whitespace-only HTML
+- Created trader/tests/test_parser.py with 17 test cases:
+  - 11 tests for parse_item() function
+  - 6 tests for validate_html_structure() function
+- All 30 tests in trader/tests/ pass
+- Typecheck passes with mypy
+
+### Codebase Patterns
+
+#### Test Infrastructure
+- trader/tests/ - Test directory inside the package (co-located tests)
+- conftest.py - Shared fixtures for all tests in the package
+- Fixtures return properly typed data using type hints
+- HTML fixtures use BeautifulSoup-compatible HTML strings
+- Prefix parser-specific fixtures with 'parser_' to avoid conflicts
+
+#### Project Structure
+- trader/ - Main package directory
+- trader/tests/ - Test directory mirroring package structure
+- tests/ - Existing root-level tests (legacy/duplication allowed)
+- pyproject.toml - Project configuration with pytest and mypy settings
+
+#### Type Checking
+- Use mypy with --no-site-packages to avoid venv issues
+- Python 3.9+ required for pattern matching compatibility
+- Add strict mypy settings in pyproject.toml
+
+#### Testing
+- pytest as the test runner
+- Test files prefixed with test_
+- Test classes prefixed with Test*
+- Test functions prefixed with test_
+- Fixtures defined in conftest.py are auto-discovered
+- Use pytest.raises() for exception testing
+
+#### Parser Module Pattern
+- parse_item(html: str) -> Dict[str, Any] - Main parsing function
+- validate_html_structure(html: str) -> None - Validation function
+- Raise ValidationError with descriptive messages
+- Use BeautifulSoup for HTML parsing
+- Use .get_text(strip=True) to extract clean text content
