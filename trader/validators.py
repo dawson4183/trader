@@ -1,4 +1,14 @@
-"""Validation functions for the trader package."""
+"""Validation functions for the trader package.
+
+This module provides functions for validating HTML structure,
+item prices, and deduplicating items.
+
+Example:
+    >>> from trader.validators import validate_html_structure, validate_price
+    >>> html = "<div class='item'>Item</div>"
+    >>> validate_html_structure(html, ['.item'])
+    >>> validate_price(19.99)
+"""
 
 from typing import Any, Dict, List, Union
 
@@ -19,14 +29,12 @@ def validate_html_structure(html: str, required_selectors: List[str]) -> bool:
 
     Raises:
         ValidationError: If any required selectors are missing from the HTML.
-                         Error message lists all missing selectors.
     """
     soup = BeautifulSoup(html, 'html.parser')
 
     missing_selectors: List[str] = []
 
     for selector in required_selectors:
-        # Attempt to select elements using the CSS selector
         elements = soup.select(selector)
         if not elements:
             missing_selectors.append(selector)
@@ -51,11 +59,9 @@ def validate_price(price: Union[int, float]) -> bool:
         ValidationError: If price is not numeric (int or float).
         ValidationError: If price is less than or equal to 0.
     """
-    # Check if price is numeric (int or float)
     if not isinstance(price, (int, float)):
         raise ValidationError('Price must be numeric')
 
-    # Check if price is greater than 0
     if price <= 0:
         raise ValidationError(f'Price must be greater than 0, got: {price}')
 
@@ -73,13 +79,11 @@ def deduplicate_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     Raises:
         ValidationError: If any item is missing the 'item_hash' key.
-                         Error message format: 'Item missing item_hash: {item}'
     """
     seen_hashes: set[str] = set()
     unique_items: List[Dict[str, Any]] = []
 
     for item in items:
-        # Check if item has item_hash key
         if 'item_hash' not in item:
             raise ValidationError(f'Item missing item_hash: {item}')
 

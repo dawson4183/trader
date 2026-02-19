@@ -1,4 +1,19 @@
-"""Item parser with validation integration for the trader package."""
+"""Item parser module with validation integration for the trader package.
+
+This module provides the ItemParser class for extracting, validating,
+and deduplicating trading items from HTML content.
+
+Example:
+    Using ItemParser to parse items from HTML:
+
+    >>> from trader.item_parser import ItemParser
+    >>> config = {'required_selectors': ['.item', '.price']}
+    >>> parser = ItemParser(config)
+    >>> html = "<div class='item' data-price='19.99' data-item-hash='abc123'>Item</div>"
+    >>> items = parser.parse(html)
+    >>> print(len(items))
+    1
+"""
 
 from typing import Any, Dict, List, Union
 
@@ -16,6 +31,15 @@ class ItemParser:
 
     Attributes:
         config: Configuration dictionary containing required_selectors list.
+        required_selectors: List of CSS selectors required in HTML.
+
+    Example:
+        >>> config = {'required_selectors': ['.item']}
+        >>> parser = ItemParser(config)
+        >>> html = "<div class='item' data-price='10.00' data-item-hash='h1'>Item</div>"
+        >>> items = parser.parse(html)
+        >>> items[0]['price']
+        10.0
     """
 
     def __init__(self, config: Dict[str, Any]) -> None:
@@ -27,6 +51,10 @@ class ItemParser:
 
         Raises:
             ValidationError: If config is missing required_selectors key.
+
+        Example:
+            >>> config = {'required_selectors': ['.item']}
+            >>> parser = ItemParser(config)
         """
         if 'required_selectors' not in config:
             raise ValidationError("Config must contain 'required_selectors' key")
@@ -68,9 +96,6 @@ class ItemParser:
     def _extract_items(self, html: str) -> List[Dict[str, Any]]:
         """Extract items from HTML content.
 
-        Finds item elements based on required_selectors and extracts
-        item data including name, price, and item_hash.
-
         Args:
             html: The HTML content to parse.
 
@@ -83,19 +108,14 @@ class ItemParser:
         soup = BeautifulSoup(html, 'html.parser')
         items: List[Dict[str, Any]] = []
 
-        # Use the first required selector to find item containers
-        # This is a simple implementation - real-world might have dedicated item selector
         if not self.required_selectors:
             return items
 
-        # Find elements that match our selectors and extract item data
-        # Strategy: Look for elements with data attributes for item data
         for selector in self.required_selectors:
             elements = soup.select(selector)
             for elem in elements:
                 item = self._extract_item_data(elem)
                 if item:
-                    # Validate price during extraction
                     if 'price' in item:
                         validate_price(item['price'])
                     items.append(item)
@@ -105,8 +125,6 @@ class ItemParser:
     def _extract_item_data(self, element: Any) -> Union[Dict[str, Any], None]:
         """Extract item data from a BeautifulSoup element.
 
-        Extracts item attributes from HTML data attributes or element content.
-
         Args:
             element: A BeautifulSoup element.
 
@@ -115,7 +133,6 @@ class ItemParser:
         """
         item: Dict[str, Any] = {}
 
-        # Extract from data attributes
         if hasattr(element, 'attrs') and 'data-item-hash' in element.attrs:
             item['item_hash'] = element['data-item-hash']
 
@@ -124,22 +141,48 @@ class ItemParser:
                 price_str = element['data-price']
                 item['price'] = float(price_str)
             except (ValueError, TypeError):
-                item['price'] = 0  # Will fail validation
-        elif hasattr(element, 'attrs') and 'data-item-price' in element.attrs:
-            try:
-                price_str = element['data-item-price']
-                item['price'] = float(price_str)
-            except (ValueError, TypeError):
-                item['price'] = 0  # Will fail validation
+                item['price'] = 0
 
         if hasattr(element, 'attrs') and 'data-name' in element.attrs:
             item['name'] = element['data-name']
         elif element.get_text(strip=True):
             item['name'] = element.get_text(strip=True)
 
-        # Generate hash if not provided
         if 'item_hash' not in item and 'name' in item:
             import hashlib
             item['item_hash'] = hashlib.md5(item['name'].encode()).hexdigest()
 
         return item if item else None
+
+
+def parse_item(html: str, selectors: Dict[str, str]) -> Dict[str, Any]:
+    """Parse a single item from HTML using CSS selectors.
+
+    Args:
+        html: The HTML content to parse.
+        selectors: Dictionary mapping field names to CSS selectors.
+
+    Returns:
+        A dictionary containing the extracted item data.
+
+    Raises:
+        ValidationError: If required selectors are missing or parsing fails.
+    """
+    validate_html_structure(html, list(selectors.values()))
+
+    soup = BeautifulSoup(html, 'html.parser')
+    item: Dict[str, Any] = {}
+
+    for field, selector in selectors.items():
+        element = soup.select_one(selector)
+        if element:
+            item[field] = element.get_text(strip=True)
+        else:
+            raise ValidationError(
+                f"Could not find element for field '{field}' with selector '{selector}'"
+            )
+
+    content_str = ''.join(str(v) for v in item.values())
+    item['item_hash'] = str(hash(content_str) % (2**32))
+
+    return item
