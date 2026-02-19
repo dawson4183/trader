@@ -2,5 +2,6 @@
 
 from .scraper import Scraper
 from .circuit_breaker import CircuitBreakerError
+from .state import StateManager
 
-__all__ = ["Scraper", "CircuitBreakerError"]
+__all__ = ["Scraper", "CircuitBreakerError", "StateManager"]

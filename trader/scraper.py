@@ -1,11 +1,13 @@
 """Scraper module with HTTP client wrapper for web scraping."""
 
+import atexit
 import urllib.request
 import urllib.error
 from typing import Optional, Dict, Any
 
 from trader.retry import retry_with_backoff
 from trader.circuit_breaker import CircuitBreaker, CircuitBreakerError
+from trader.state import StateManager
 
 
 class HTTPClient:
@@ -40,15 +42,20 @@ class Scraper:
     
     The Scraper can be configured with a CircuitBreaker to prevent
     cascading failures when external services are unavailable.
+    
+    The Scraper also includes state management for crash recovery,
+    allowing scraping to resume from the last saved state.
     """
 
     def __init__(
         self,
         client: Optional[HTTPClient] = None,
         circuit_breaker: Optional[CircuitBreaker] = None,
-        circuit_breaker_config: Optional[Dict[str, Any]] = None
+        circuit_breaker_config: Optional[Dict[str, Any]] = None,
+        state_manager: Optional[StateManager] = None,
+        state_filepath: Optional[str] = None
     ) -> None:
-        """Initialize scraper with optional HTTP client and circuit breaker.
+        """Initialize scraper with optional HTTP client, circuit breaker, and state manager.
         
         Args:
             client: HTTP client instance. If None, a default client is created.
@@ -56,6 +63,9 @@ class Scraper:
                 circuit_breaker_config is ignored.
             circuit_breaker_config: Configuration dict for creating a new
                 CircuitBreaker. Keys: 'failure_threshold', 'recovery_timeout', 'name'.
+            state_manager: Pre-configured StateManager instance. If None, a default
+                StateManager is created with state_filepath if provided.
+            state_filepath: Path for state file. Used if state_manager is not provided.
         """
         self.client = client or HTTPClient()
         
@@ -75,6 +85,17 @@ class Scraper:
                 recovery_timeout=30.0,
                 name='scraper'
             )
+        
+        # Initialize state manager
+        if state_manager is not None:
+            self._state_manager = state_manager
+        elif state_filepath is not None:
+            self._state_manager = StateManager(filepath=state_filepath)
+        else:
+            self._state_manager = StateManager()
+        
+        # Register atexit handler for emergency state save
+        self._register_atexit_handler()
 
     @property
     def circuit_breaker(self) -> CircuitBreaker:
@@ -84,6 +105,75 @@ class Scraper:
             The CircuitBreaker instance used by this scraper.
         """
         return self._circuit_breaker
+
+    @property
+    def state_manager(self) -> StateManager:
+        """Get the state manager instance.
+        
+        Returns:
+            The StateManager instance used by this scraper.
+        """
+        return self._state_manager
+
+    def _register_atexit_handler(self) -> None:
+        """Register atexit handler for emergency state save on SIGINT/SIGTERM."""
+        def _emergency_save() -> None:
+            """Save state on process exit."""
+            if self._state_manager.filepath:
+                self._state_manager.save_on_crash()
+        
+        atexit.register(_emergency_save)
+
+    def save_state_on_exception(self, exc: Exception) -> None:
+        """Save state before raising an exception.
+        
+        This method should be called from exception handlers to ensure
+        state is persisted before the exception propagates.
+        
+        Args:
+            exc: The exception that triggered the save.
+        """
+        self._state_manager.save_on_crash()
+
+    def resume_from_state(self, filepath: Optional[str] = None) -> bool:
+        """Resume scraping from saved state.
+        
+        Loads state from a JSON file and restores the scraper's position.
+        
+        Args:
+            filepath: Path to the state file. Uses state_manager's default if None.
+        
+        Returns:
+            True if state was loaded successfully, False if no state file exists.
+        """
+        target_path = filepath or self._state_manager.filepath
+        if target_path is None:
+            return False
+        
+        return self._state_manager.load(target_path)
+
+    def clear_state(self, filepath: Optional[str] = None) -> bool:
+        """Clear the state file after successful completion.
+        
+        Args:
+            filepath: Path to the state file. Uses state_manager's default if None.
+        
+        Returns:
+            True if state file was deleted or didn't exist, False on error.
+        """
+        from pathlib import Path
+        
+        target_path = filepath or self._state_manager.filepath
+        if target_path is None:
+            return True
+        
+        try:
+            path_obj = Path(target_path)
+            if path_obj.exists():
+                path_obj.unlink()
+            return True
+        except Exception:
+            return False
 
     @retry_with_backoff(max_attempts=5)
     def _fetch_with_retry(self, url: str) -> str:
@@ -112,6 +202,8 @@ class Scraper:
         to prevent cascading failures. It also uses exponential backoff retry
         (max 5 attempts) for transient failures.
         
+        On exception, state is saved before re-raising for crash recovery.
+        
         Args:
             url: The URL to fetch.
             
@@ -123,12 +215,22 @@ class Scraper:
             urllib.error.URLError: If all retry attempts fail.
             urllib.error.HTTPError: If a non-retryable HTTP error occurs (4xx except 429).
         """
-        return self._circuit_breaker.call(self._fetch_with_retry, url)
+        # Update state with current URL before attempting fetch
+        self._state_manager.update(url=url)
+        
+        try:
+            return self._circuit_breaker.call(self._fetch_with_retry, url)
+        except Exception as e:
+            # Save state before re-raising exception
+            self.save_state_on_exception(e)
+            raise
 
     def scrape(self, url: str) -> dict:
         """Scrape data from a URL.
         
         This is a placeholder method for future scraping logic.
+        
+        On successful completion, the state file is cleared.
         
         Args:
             url: The URL to scrape.
@@ -136,5 +238,18 @@ class Scraper:
         Returns:
             A dictionary containing scraped data.
         """
-        content = self.fetch(url)
-        return {"url": url, "content": content, "status": "fetched"}
+        # Update state before scraping
+        self._state_manager.update(url=url)
+        
+        try:
+            content = self.fetch(url)
+            result = {"url": url, "content": content, "status": "fetched"}
+            
+            # Clear state on successful completion
+            self.clear_state()
+            
+            return result
+        except Exception as e:
+            # Save state before re-raising
+            self.save_state_on_exception(e)
+            raise

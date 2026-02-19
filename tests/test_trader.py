@@ -5,10 +5,12 @@ from unittest.mock import patch, MagicMock, Mock, call
 import urllib.error
 import io
 import time
+import os
 
 from trader import Scraper
 from trader.scraper import HTTPClient
 from trader.circuit_breaker import CircuitBreaker, CircuitBreakerError, CircuitState
+from trader.state import StateManager
 
 
 class TestHTTPClient(unittest.TestCase):
@@ -102,7 +104,7 @@ class TestModuleStructure(unittest.TestCase):
     def test_all_exports_defined(self) -> None:
         """Test that __all__ is properly defined."""
         import trader
-        self.assertEqual(trader.__all__, ["Scraper", "CircuitBreakerError"])
+        self.assertEqual(trader.__all__, ["Scraper", "CircuitBreakerError", "StateManager"])
 
 
 class TestScraperRetryBehavior(unittest.TestCase):
@@ -531,6 +533,309 @@ class TestScraperCircuitBreakerIntegration(unittest.TestCase):
         
         self.assertEqual(scraper.circuit_breaker.failure_count, 2)
         self.assertEqual(scraper.circuit_breaker.state, CircuitState.OPEN)
+
+
+class TestScraperStateManagerIntegration(unittest.TestCase):
+    """Test cases for Scraper StateManager integration and crash recovery."""
+
+    def setUp(self) -> None:
+        """Create temporary directory for test files."""
+        import tempfile
+        import shutil
+        self.temp_dir = tempfile.mkdtemp()
+        self.state_file = os.path.join(self.temp_dir, "scraper_state.json")
+        self.addCleanup(self._cleanup_temp)
+    
+    def _cleanup_temp(self) -> None:
+        """Clean up temporary files."""
+        import shutil
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+
+    def test_scraper_initializes_without_state_manager(self) -> None:
+        """Scraper should work without StateManager by default."""
+        scraper = Scraper()
+        self.assertIsNone(scraper.state_manager)
+
+    def test_scraper_initializes_with_state_file(self) -> None:
+        """Scraper should initialize StateManager when state_file provided."""
+        scraper = Scraper(state_file=self.state_file)
+        self.assertIsNotNone(scraper.state_manager)
+        self.assertIsInstance(scraper.state_manager, StateManager)
+        self.assertEqual(scraper.state_manager.filepath, self.state_file)
+
+    def test_scraper_initializes_with_state_manager_instance(self) -> None:
+        """Scraper should accept pre-configured StateManager instance."""
+        sm = StateManager(filepath=self.state_file, url="https://test.com")
+        scraper = Scraper(state_manager=sm)
+        self.assertEqual(scraper.state_manager, sm)
+        self.assertEqual(scraper.state_manager.url, "https://test.com")
+
+    def test_state_manager_property_returns_instance(self) -> None:
+        """state_manager property should return the StateManager instance."""
+        scraper = Scraper(state_file=self.state_file)
+        self.assertEqual(scraper.state_manager, scraper._state_manager)
+
+    @patch("trader.scraper.HTTPClient.get")
+    def test_fetch_saves_state_on_exception(self, mock_get: MagicMock) -> None:
+        """Exceptions in fetch should trigger state save before re-raise."""
+        mock_get.side_effect = ConnectionError("Connection failed")
+        scraper = Scraper(state_file=self.state_file)
+        
+        with self.assertRaises(ConnectionError):
+            scraper.fetch("http://example.com")
+        
+        # State file should have been created with crash state
+        self.assertTrue(os.path.exists(self.state_file))
+        with open(self.state_file, 'r') as f:
+            data = json.load(f)
+        self.assertEqual(data["url"], "http://example.com")
+
+    @patch("trader.scraper.HTTPClient.get")
+    @patch("time.sleep")
+    def test_fetch_saves_state_after_retry_exhaustion(self, mock_sleep: MagicMock, mock_get: MagicMock) -> None:
+        """State should be saved when all retries are exhausted."""
+        mock_get.side_effect = [
+            urllib.error.HTTPError("http://example.com", 500, "Error", {}, io.BytesIO(b"")),
+            urllib.error.HTTPError("http://example.com", 500, "Error", {}, io.BytesIO(b"")),
+            urllib.error.HTTPError("http://example.com", 500, "Error", {}, io.BytesIO(b"")),
+            urllib.error.HTTPError("http://example.com", 500, "Error", {}, io.BytesIO(b"")),
+            urllib.error.HTTPError("http://example.com", 500, "Error", {}, io.BytesIO(b"")),
+        ]
+        scraper = Scraper(state_file=self.state_file)
+        
+        with self.assertRaises(urllib.error.HTTPError):
+            scraper.fetch("http://example.com/page1")
+        
+        # State should be saved with the URL
+        self.assertTrue(os.path.exists(self.state_file))
+        with open(self.state_file, 'r') as f:
+            data = json.load(f)
+        self.assertEqual(data["url"], "http://example.com/page1")
+
+    @patch("trader.scraper.HTTPClient.get")
+    def test_scrape_saves_state_on_exception(self, mock_get: MagicMock) -> None:
+        """Exceptions in scrape should trigger state save before re-raise."""
+        mock_get.side_effect = urllib.error.HTTPError(
+            "http://example.com", 404, "Not Found", {}, io.BytesIO(b"")
+        )
+        scraper = Scraper(state_file=self.state_file)
+        
+        with self.assertRaises(urllib.error.HTTPError):
+            scraper.scrape("http://example.com/items")
+        
+        # State file should have been created
+        self.assertTrue(os.path.exists(self.state_file))
+        with open(self.state_file, 'r') as f:
+            data = json.load(f)
+        self.assertEqual(data["url"], "http://example.com/items")
+
+    @patch("trader.scraper.HTTPClient.get")
+    def test_scrape_clears_state_on_success(self, mock_get: MagicMock) -> None:
+        """State file should be deleted on successful scrape completion."""
+        mock_get.return_value = "success content"
+        scraper = Scraper(state_file=self.state_file)
+        
+        # First, create a state file by simulating a crash
+        scraper.state_manager.update(url="http://example.com")
+        scraper.state_manager.save()
+        self.assertTrue(os.path.exists(self.state_file))
+        
+        # Now do a successful scrape
+        result = scraper.scrape("http://example.com")
+        
+        self.assertEqual(result["status"], "fetched")
+        # State file should be deleted on success
+        self.assertFalse(os.path.exists(self.state_file))
+
+    @patch("trader.scraper.HTTPClient.get")
+    def test_scrape_preserves_state_when_clear_disabled(self, mock_get: MagicMock) -> None:
+        """State file should be preserved when clear_state_on_success=False."""
+        mock_get.return_value = "success content"
+        scraper = Scraper(state_file=self.state_file)
+        
+        # Create a state file
+        scraper.state_manager.update(url="http://example.com")
+        scraper.state_manager.save()
+        
+        # Scrape with clear_state_on_success=False
+        result = scraper.scrape("http://example.com", clear_state_on_success=False)
+        
+        self.assertEqual(result["status"], "fetched")
+        # State file should still exist
+        self.assertTrue(os.path.exists(self.state_file))
+
+    def test_clear_state_deletes_file(self) -> None:
+        """clear_state should delete the state file."""
+        scraper = Scraper(state_file=self.state_file)
+        
+        # Create state file
+        scraper.state_manager.save()
+        self.assertTrue(os.path.exists(self.state_file))
+        
+        # Clear it
+        result = scraper.clear_state()
+        
+        self.assertTrue(result)
+        self.assertFalse(os.path.exists(self.state_file))
+
+    def test_clear_state_returns_true_if_no_file(self) -> None:
+        """clear_state should return True if no state file exists."""
+        scraper = Scraper(state_file=self.state_file)
+        
+        result = scraper.clear_state()
+        
+        self.assertTrue(result)
+
+    def test_clear_state_without_state_manager(self) -> None:
+        """clear_state should work when no state manager is configured."""
+        scraper = Scraper()
+        
+        result = scraper.clear_state()
+        
+        self.assertTrue(result)
+
+    def test_resume_from_state_loads_saved_state(self) -> None:
+        """resume_from_state should load state from JSON file."""
+        # Create a state file manually
+        state_data = {
+            "url": "http://example.com/page5",
+            "page": 5,
+            "items_processed": 50,
+            "retry_count": 2,
+            "timestamp": time.time()
+        }
+        with open(self.state_file, 'w') as f:
+            json.dump(state_data, f)
+        
+        # Create scraper and resume
+        scraper = Scraper(state_file=self.state_file)
+        result = scraper.resume_from_state()
+        
+        self.assertTrue(result)
+        self.assertEqual(scraper.state_manager.url, "http://example.com/page5")
+        self.assertEqual(scraper.state_manager.page, 5)
+        self.assertEqual(scraper.state_manager.items_processed, 50)
+        self.assertEqual(scraper.state_manager.retry_count, 2)
+
+    def test_resume_from_state_returns_false_if_no_file(self) -> None:
+        """resume_from_state should return False if no state file exists."""
+        scraper = Scraper(state_file=self.state_file)
+        
+        result = scraper.resume_from_state()
+        
+        self.assertFalse(result)
+
+    def test_resume_from_state_without_state_manager(self) -> None:
+        """resume_from_state should return False when no state manager."""
+        scraper = Scraper()  # No state manager
+        
+        result = scraper.resume_from_state()
+        
+        self.assertFalse(result)
+
+    @patch("trader.scraper.HTTPClient.get")
+    def test_fetch_updates_state_url_before_fetch(self, mock_get: MagicMock) -> None:
+        """fetch should update state URL before attempting fetch."""
+        mock_get.return_value = "content"
+        scraper = Scraper(state_file=self.state_file)
+        
+        scraper.fetch("http://example.com/products")
+        
+        # State should have been updated with the URL
+        self.assertEqual(scraper.state_manager.url, "http://example.com/products")
+
+    def test_atexit_handler_registered_with_state_manager(self) -> None:
+        """atexit handler should be registered when state manager is present."""
+        scraper = Scraper(state_file=self.state_file)
+        
+        self.assertTrue(scraper._atexit_registered)
+
+    def test_atexit_handler_not_registered_without_state_manager(self) -> None:
+        """atexit handler should not be registered without state manager."""
+        scraper = Scraper()
+        
+        self.assertFalse(scraper._atexit_registered)
+
+    def test_emergency_save_state_method(self) -> None:
+        """_emergency_save_state should save state without raising."""
+        scraper = Scraper(state_file=self.state_file)
+        scraper.state_manager.update(url="http://crash.com")
+        scraper.state_manager.page = 99
+        
+        # Should not raise
+        scraper._emergency_save_state()
+        
+        # State should be saved
+        self.assertTrue(os.path.exists(self.state_file))
+        with open(self.state_file, 'r') as f:
+            data = json.load(f)
+        self.assertEqual(data["url"], "http://crash.com")
+        self.assertEqual(data["page"], 99)
+
+    def test_emergency_save_state_handles_errors_gracefully(self) -> None:
+        """_emergency_save_state should not raise on errors."""
+        scraper = Scraper(state_file="/nonexistent/path/state.json")
+        scraper.state_manager.update(url="http://example.com")
+        
+        # Should not raise even though path is invalid
+        try:
+            scraper._emergency_save_state()
+        except Exception as e:
+            self.fail(f"_emergency_save_state raised an exception: {e}")
+
+    def test_save_state_on_error_method(self) -> None:
+        """_save_state_on_error should save state for crash recovery."""
+        scraper = Scraper(state_file=self.state_file)
+        scraper.state_manager.update(url="http://error.com")
+        scraper.state_manager.items_processed = 42
+        
+        scraper._save_state_on_error()
+        
+        with open(self.state_file, 'r') as f:
+            data = json.load(f)
+        self.assertEqual(data["url"], "http://error.com")
+        self.assertEqual(data["items_processed"], 42)
+
+    def test_save_state_on_error_without_state_manager(self) -> None:
+        """_save_state_on_error should work without state manager."""
+        scraper = Scraper()  # No state manager
+        
+        # Should not raise
+        try:
+            scraper._save_state_on_error()
+        except Exception as e:
+            self.fail(f"_save_state_on_error raised an exception: {e}")
+
+    @patch("trader.scraper.HTTPClient.get")
+    def test_circuit_breaker_error_triggers_state_save(self, mock_get: MagicMock) -> None:
+        """CircuitBreakerError should also trigger state save."""
+        from trader.circuit_breaker import CircuitBreaker
+        
+        # Create circuit breaker with threshold=1 to quickly open it
+        cb = CircuitBreaker(failure_threshold=1, recovery_timeout=1000.0)
+        
+        # Record a failure to open the circuit
+        mock_get.side_effect = ConnectionError("Open the circuit")
+        try:
+            cb.call(mock_get, "http://example.com")
+        except ConnectionError:
+            pass
+        
+        # Circuit should now be open
+        self.assertEqual(cb.state.name, "OPEN")
+        
+        scraper = Scraper(circuit_breaker=cb, state_file=self.state_file)
+        scraper.state_manager.update(page=10)
+        
+        with self.assertRaises(CircuitBreakerError):
+            scraper.fetch("http://example.com")
+        
+        # State should be saved
+        self.assertTrue(os.path.exists(self.state_file))
+        with open(self.state_file, 'r') as f:
+            data = json.load(f)
+        self.assertEqual(data["page"], 10)
 
 
 if __name__ == "__main__":
