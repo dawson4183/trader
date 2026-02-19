@@ -61,6 +61,46 @@ feature/structured-logging
 - 13 new tests added for logging integration in tests/test_item_parser_logging.py
 - All 108 tests pass (including existing logging_utils tests)
 
+#### Story 6.0: Update requirements.txt and add comprehensive logging tests
+- Verified requirements.txt has all needed dependencies (no changes required)
+- Created tests/test_logging.py with comprehensive test coverage:
+  - TestJsonFormatterStructure: 6 tests for JSON structure validation
+    - Required fields (timestamp, level, message)
+    - ISO 8601 timestamp format with timezone
+    - Uppercase level names
+    - Optional context field handling
+    - Valid JSON output verification
+  - TestTimedRotatingFileHandlerRotation: 4 tests for file rotation
+    - Rotation creates new files
+    - Backup count respects retention policy
+    - Rotated files preserve JSON format
+    - Daily interval configuration (86400 seconds)
+  - TestWebhookHandlerFilteringAndErrors: 12 tests for webhook handler
+    - URL filtering (skips when no URL, sends when valid)
+    - Level filtering (skips INFO/WARNING, sends ERROR/CRITICAL)
+    - Error handling (suppresses connection, timeout, HTTP, URL, JSON errors)
+    - Request headers verification
+  - TestSetupLoggingIdempotency: 3 tests for idempotency
+    - Multiple calls maintain same handler count
+    - Same logger instance returned
+    - JsonFormatter detection for idempotency check
+  - TestTraderModuleIntegration: 4 tests for module integration
+    - Validators import without errors
+    - Validation functions log to file
+    - Log output is valid JSON
+    - Context properly passed to logs
+  - TestConfigurationIntegration: 3 tests for config integration
+    - Respects LOG_LEVEL from config
+    - Respects LOG_RETENTION_DAYS from config
+    - Respects WEBHOOK_URL from config
+  - TestEndToEndLogging: 2 tests for end-to-end pipeline
+    - Full logging pipeline test
+    - Log levels respect configuration
+- All 35 new tests pass (tests/test_logging.py)
+- All 143 total tests pass (full test suite)
+- Typecheck passes (mypy --ignore-missing-imports)
+- Commit: 843f4dd
+
 ### Codebase Patterns
 
 #### Logging Structure
@@ -87,6 +127,10 @@ feature/structured-logging
 - Clean up test artifacts (logs directory) in tests
 - Reset root logger handlers between tests
 - Test logging output using caplog fixture to verify log levels and context
+- Use tempfile.TemporaryDirectory() for isolated test log files
+- Patch config_module attributes to test configuration variations
+- Group related tests into classes by component/feature
+- Test both success paths and error handling paths
 
 #### Validation with Logging
 - trader/validators.py: Centralized validation functions
@@ -96,8 +140,15 @@ feature/structured-logging
 - Context includes relevant data: selectors, prices, counts, rates
 
 ### Pending Stories
-- Story 6.0: Add get_logger(name) helper function with context support
 - Story 7.0: Create example usage and integration tests
+
+### Completed Stories
+- Story 1.0: Create config.py with logging configuration structure
+- Story 2.0: Create JSON formatter for structured logging
+- Story 3.0: Create webhook handler for ERROR/CRITICAL logs
+- Story 4.0: Create setup_logging() function with TimedRotatingFileHandler
+- Story 5.0: Integrate logging into trader module entry point
+- Story 6.0: Update requirements.txt and add comprehensive logging tests
 
 ### Notes
 - Import pattern: `import trader.config as config_module` to avoid circular imports
