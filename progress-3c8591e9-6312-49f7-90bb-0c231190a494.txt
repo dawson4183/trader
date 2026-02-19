@@ -184,6 +184,20 @@ The module uses strong typing:
 - Record failures with severity levels
 - Provide status query methods
 
+### Pattern: Health Check Function
+```python
+from trader.health_check import check_database_connection
+
+# Check database health
+result = check_database_connection()
+# Returns: {'status': 'ok', 'response_ms': 1.234}
+# Or on failure: {'status': 'error', 'response_ms': 0.0, 'error': '...'}
+```
+**Guidelines:**
+- Use time.perf_counter() for accurate timing
+- Return consistent dict structure with status, response_ms, and optional error
+- Always close database connection in finally block
+
 ## Stories Remaining
 - Story 4.0: Create health_check module with database connection check
 - Story 4.1: Create health_check module with scraper status check
@@ -191,3 +205,36 @@ The module uses strong typing:
 - Story 5.0: Integrate health check CLI flag
 - Story 6.0: Create alert module with webhook and logging
 - Story 7.0: Integrate alerts into scraper on critical failures
+
+### Story 4.0: Create health_check module with database connection check
+- Status: COMPLETED
+- Commit: feat: 4.0 - Create health_check.py with check_database_connection()
+- Files Added:
+  - trader/health_check.py: Health check module with database connection check
+  - tests/test_health_check.py: Comprehensive tests for health check functions
+
+**Function: check_database_connection(db_path)**
+- Returns dict with 'status': 'ok'|'error', 'response_ms', and optionally 'error'
+- Executes 'SELECT 1' query to verify database connectivity
+- Measures response time in milliseconds using time.perf_counter()
+- Returns response_ms=0.0 on connection failure
+- Includes error message in 'error' key on failure
+
+**Test Coverage (12 tests):**
+- test_function_exists
+- test_returns_dict
+- test_returns_status_key
+- test_returns_response_ms_key
+- test_ok_status_on_valid_connection
+- test_response_ms_is_valid_number
+- test_response_ms_in_milliseconds
+- test_no_error_on_success
+- test_has_error_on_failure
+- test_error_response_ms_is_zero
+- test_error_message_is_string
+- test_executes_select_1_query
+
+**Test Results:**
+- All 12 health check tests pass
+- mypy typecheck passes
+- All 127 tests in test suite pass
