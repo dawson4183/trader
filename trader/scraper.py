@@ -7,7 +7,9 @@ Also includes scraper_retry decorator with exponential backoff for network opera
 """
 
 import functools
+import logging
 import time
+import traceback
 import urllib.error
 from typing import (
     Any,
@@ -137,6 +139,8 @@ class Scraper:
             db = DatabaseConnection()
         self.db: DatabaseConnection = db
         self.current_run_id: Optional[int] = None
+        self._alert_sent: bool = False
+        self._alert_module: Optional[Any] = None
         # Ensure tables exist
         create_tables(self.db)
 
@@ -339,3 +343,265 @@ class Scraper:
             (limit,)
         )
         return results
+
+    def import_alert_module(self) -> Optional[Any]:
+        """Lazily import the alert module to avoid circular imports.
+
+        Returns:
+            The alert module if available, None otherwise.
+        """
+        if self._alert_module is None:
+            try:
+                from trader import alert as alert_mod
+                self._alert_module = alert_mod
+            except ImportError:
+                return None
+        return self._alert_module
+
+    def send_critical_alert(self, message: str) -> bool:
+        """Send a critical level alert via the alert module.
+
+        Tracks that an alert was sent to avoid duplicate alerts.
+        Uses lazy import to avoid circular dependency issues.
+
+        Args:
+            message: The alert message to send.
+
+        Returns:
+            True if alert was sent successfully, False otherwise.
+        """
+        # Avoid duplicate alerts
+        if self._alert_sent:
+            return False
+
+        alert_mod = self.import_alert_module()
+        if alert_mod is None:
+            return False
+
+        try:
+            # Check if send_alert function exists
+            if not hasattr(alert_mod, 'send_alert'):
+                return False
+
+            result = alert_mod.send_alert(message, "critical")
+            if result:
+                self._alert_sent = True
+            return result
+        except Exception:
+            # Alert sending failed, but we don't want to break the scraper
+            return False
+
+    def scrape(self) -> Optional[int]:
+        """Run the scraper with alert integration for critical failures.
+
+        Starts a run, executes scraping work, and handles exceptions
+        by sending critical alerts before re-raising. Records failures
+        in the database and ensures proper cleanup.
+
+        Returns:
+            Number of items scraped, or None if no work done.
+
+        Raises:
+            Exception: Re-raises any exception after sending alert.
+        """
+        items_count = 0
+        try:
+            self.start_run()
+            # Scraping work would go here - placeholder
+            # Items would be scraped and counted
+            items_count = self._do_scrape()
+            self.end_run("completed", items_count)
+            return items_count
+        except Exception as e:
+            # Get error message and stack trace excerpt
+            error_msg = str(e)
+            tb_str = traceback.format_exc(limit=5)  # Limit to 5 frames
+
+            # Build alert message
+            alert_msg = f"Scraper failed with error: {error_msg}\n\nStack trace:\n{tb_str}"
+
+            # Record failure in database
+            self.record_failure(error_msg, "critical")
+
+            # Send critical alert before re-raising
+            # If alert fails, log the error but still propagate exception
+            try:
+                alert_sent = self.send_critical_alert(alert_msg)
+                if not alert_sent:
+                    logging.getLogger(__name__).warning(
+                        "Failed to send critical alert for scraper failure"
+                    )
+            except Exception as alert_err:
+                logging.getLogger(__name__).error(
+                    "Error sending alert: %s", alert_err
+                )
+
+            # Ensure run is marked as failed
+            try:
+                if self.current_run_id is not None:
+                    self.end_run("failed", items_count)
+            except Exception:
+                pass  # Best effort cleanup
+
+            # Re-raise the original exception
+            raise
+
+    def _do_scrape(self) -> int:
+        """Placeholder for actual scraping work.
+
+        This method should be overridden or replaced with actual
+        scraping logic. Returns the number of items scraped.
+
+        Returns:
+            Number of items scraped.
+        """
+        # Placeholder - no actual scraping work
+        return 0
+
+    def reset_alert_flag(self) -> None:
+        """Reset the alert sent flag for testing purposes.
+
+        Allows tests to reset the alert tracking state between runs.
+        """
+        self._alert_sent = False
+
+
+# Circuit Breaker Implementation - Story 3
+import threading
+
+from trader.exceptions import CircuitOpenError
+
+T = TypeVar("T")
+
+CircuitStateType = Literal["CLOSED", "OPEN", "HALF_OPEN"]
+
+
+class CircuitBreaker:
+    """Circuit breaker pattern implementation for resilient scraper operations.
+    
+    Implements the circuit breaker pattern with three states:
+    - CLOSED: Normal operation, circuit allows calls through
+    - OPEN: Too many failures, circuit rejects all calls immediately
+    - HALF_OPEN: Recovery test mode, allows one test call to check health
+    
+    Transitions:
+    - CLOSED -> OPEN: After failure_threshold consecutive failures
+    - OPEN -> HALF_OPEN: After recovery_timeout seconds have passed
+    - HALF_OPEN -> CLOSED: If the test call succeeds
+    - HALF_OPEN -> OPEN: If the test call fails
+    
+    Thread-safe using threading.Lock for all state modifications.
+    
+    Attributes:
+        failure_threshold: Number of consecutive failures before opening circuit.
+            Defaults to 10.
+        recovery_timeout: Seconds to wait before testing recovery.
+            Defaults to 60.
+        current_state: Current state of the circuit.
+        failure_count: Current number of consecutive failures.
+        last_failure_time: Timestamp of the last failure, or None.
+    """
+    
+    def __init__(
+        self,
+        failure_threshold: int = 10,
+        recovery_timeout: float = 60.0,
+    ) -> None:
+        """Initialize the circuit breaker."""
+        self.failure_threshold: int = failure_threshold
+        self.recovery_timeout: float = recovery_timeout
+        
+        # Circuit state
+        self._state: CircuitStateType = "CLOSED"
+        self._failure_count: int = 0
+        self._last_failure_time: Optional[float] = None
+        
+        # Thread safety
+        self._lock: threading.Lock = threading.Lock()
+    
+    @property
+    def current_state(self) -> CircuitStateType:
+        """Get the current state of the circuit breaker."""
+        with self._lock:
+            return self._state
+    
+    @property
+    def failure_count(self) -> int:
+        """Get the current failure count."""
+        with self._lock:
+            return self._failure_count
+    
+    @property
+    def last_failure_time(self) -> Optional[float]:
+        """Get the timestamp of the last failure."""
+        with self._lock:
+            return self._last_failure_time
+    
+    def _can_attempt_recovery(self) -> bool:
+        """Check if enough time has passed to attempt recovery."""
+        if self._last_failure_time is None:
+            return True
+        return (time.time() - self._last_failure_time) >= self.recovery_timeout
+    
+    def _transition_to_open(self) -> None:
+        """Transition circuit to OPEN state."""
+        self._state = "OPEN"
+        self._last_failure_time = time.time()
+    
+    def _transition_to_half_open(self) -> None:
+        """Transition circuit to HALF_OPEN state."""
+        self._state = "HALF_OPEN"
+    
+    def _transition_to_closed(self) -> None:
+        """Transition circuit to CLOSED state."""
+        self._state = "CLOSED"
+        self._failure_count = 0
+        self._last_failure_time = None
+    
+    def record_success(self) -> None:
+        """Record a successful operation."""
+        with self._lock:
+            if self._state == "CLOSED":
+                self._failure_count = 0
+            elif self._state == "HALF_OPEN":
+                self._transition_to_closed()
+    
+    def record_failure(self) -> None:
+        """Record a failed operation and update circuit state."""
+        with self._lock:
+            if self._state == "CLOSED":
+                self._failure_count += 1
+                self._last_failure_time = time.time()
+                if self._failure_count >= self.failure_threshold:
+                    self._transition_to_open()
+            elif self._state == "HALF_OPEN":
+                self._failure_count += 1
+                self._transition_to_open()
+    
+    def reset(self) -> None:
+        """Manually reset the circuit breaker to CLOSED state."""
+        with self._lock:
+            self._state = "CLOSED"
+            self._failure_count = 0
+            self._last_failure_time = None
+    
+    def call(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        """Execute a function with circuit breaker protection."""
+        with self._lock:
+            if self._state == "OPEN":
+                if self._can_attempt_recovery():
+                    self._transition_to_half_open()
+                else:
+                    raise CircuitOpenError(
+                        f"Circuit breaker is OPEN after {self._failure_count} failures. "
+                        f"Retry after {self.recovery_timeout} seconds."
+                    )
+            # HALF_OPEN and CLOSED states allow calls through
+        
+        try:
+            result = func(*args, **kwargs)
+            self.record_success()
+            return result
+        except Exception:
+            self.record_failure()
+            raise
