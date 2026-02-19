@@ -5,10 +5,20 @@ Provides command-line interface with health check functionality.
 
 import argparse
 import json
+import os
 import sys
 from typing import Dict, Any, Literal
 
 from trader.health_check import check_database_connection, check_scraper_status, check_recent_failures
+
+
+def get_db_path() -> str:
+    """Get database path from environment or use default.
+
+    Returns:
+        Database path string, defaults to ':memory:' if not set.
+    """
+    return os.environ.get("TRADER_DB_PATH", ":memory:")
 
 
 def run_health_checks() -> Dict[str, Any]:
@@ -21,10 +31,12 @@ def run_health_checks() -> Dict[str, Any]:
             - 'recent_failures': Recent failures check results
             - 'overall_status': 'healthy', 'degraded', or 'unhealthy'
     """
+    db_path = get_db_path()
+
     # Run individual checks
-    database_result = check_database_connection()
-    scraper_result = check_scraper_status()
-    failures_result = check_recent_failures()
+    database_result = check_database_connection(db_path)
+    scraper_result = check_scraper_status(db_path)
+    failures_result = check_recent_failures(db_path)
 
     # Determine overall status
     overall_status = _determine_overall_status(
