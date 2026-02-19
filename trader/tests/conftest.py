@@ -139,3 +139,90 @@ def price_strings_invalid() -> list[str]:
         'abc',        # No numbers
         '-$10.00',    # Negative (handled as invalid after parsing)
     ]
+
+
+# Fixtures for parser.py module
+
+@pytest.fixture
+def parser_html_basic() -> str:
+    """Return HTML fixture with .item-name, .price, and data-hash for parser.py."""
+    return """
+    <html>
+        <body>
+            <div class="item" data-hash="abc123xyz">
+                <h1 class="item-name">Test Item</h1>
+                <span class="price">$19.99</span>
+            </div>
+        </body>
+    </html>
+    """
+
+
+@pytest.fixture
+def parser_html_no_item_name() -> str:
+    """Return HTML fixture without .item-name element."""
+    return """
+    <html>
+        <body>
+            <div class="item" data-hash="abc123xyz">
+                <span class="price">$19.99</span>
+            </div>
+        </body>
+    </html>
+    """
+
+
+@pytest.fixture
+def parser_html_no_price() -> str:
+    """Return HTML fixture without .price element."""
+    return """
+    <html>
+        <body>
+            <div class="item" data-hash="abc123xyz">
+                <h1 class="item-name">Test Item</h1>
+            </div>
+        </body>
+    </html>
+    """
+
+
+@pytest.fixture
+def parser_html_no_data_hash() -> str:
+    """Return HTML fixture without data-hash attribute."""
+    return """
+    <html>
+        <body>
+            <div class="item">
+                <h1 class="item-name">Test Item</h1>
+                <span class="price">$19.99</span>
+            </div>
+        </body>
+    </html>
+    """
+
+
+@pytest.fixture
+def parser_html_empty_hash() -> str:
+    """Return HTML fixture with empty data-hash attribute."""
+    return """
+    <html>
+        <body>
+            <div class="item" data-hash="">
+                <h1 class="item-name">Test Item</h1>
+                <span class="price">$19.99</span>
+            </div>
+        </body>
+    </html>
+    """
+
+
+@pytest.fixture
+def parser_html_empty() -> str:
+    """Return empty HTML fixture for parser.py."""
+    return ""
+
+
+@pytest.fixture
+def parser_html_whitespace() -> str:
+    """Return whitespace-only HTML fixture for parser.py."""
+    return "   \n\t   "
