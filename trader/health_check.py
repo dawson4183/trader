@@ -176,3 +176,103 @@ def _check_scraper_status_impl(db_path: str) -> Dict[str, Any]:
 
     finally:
         db.close()
+
+
+def check_recent_failures(db_path: str = ":memory:") -> Dict[str, Any]:
+    """Check for recent failures in the last 24 hours and summarize them.
+
+    Queries the scraper_failures table for failures that occurred within
+    the last 24 hours, groups them by message pattern (first 50 characters),
+    and returns a summary including total counts and top error patterns.
+
+    Args:
+        db_path: Path to the SQLite database file. Defaults to in-memory.
+
+    Returns:
+        A dictionary containing:
+            - 'total_24h': Total number of failures in last 24 hours (int)
+            - 'critical_24h': Number of critical-level failures (int)
+            - 'warning_24h': Number of warning-level failures (int)
+            - 'top_errors': List of top 5 most frequent error patterns,
+              each containing 'message' (first 50 chars) and 'count' (int)
+        Returns empty dict if database is empty (no failures yet).
+    """
+    return _check_recent_failures_impl(db_path)
+
+
+def _check_recent_failures_impl(db_path: str) -> Dict[str, Any]:
+    """Internal implementation for recent failures check."""
+    from trader.schema import create_tables
+
+    db = DatabaseConnection(db_path)
+
+    try:
+        # Ensure tables exist
+        create_tables(db)
+
+        # Get failures in last 24 hours
+        # SQLite datetime('now', '-24 hours') gives us local time, but for simplicity
+        # We'll use UTC comparison since that's what CURRENT_TIMESTAMP stores
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+        cutoff_str = cutoff_time.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Get total failures in last 24h
+        total_result = db.execute(
+            """SELECT COUNT(*) as count
+               FROM scraper_failures
+               WHERE occurred_at >= ?""",
+            (cutoff_str,)
+        )
+        total_24h = total_result[0]["count"] if total_result else 0
+
+        # Get critical failures count
+        critical_result = db.execute(
+            """SELECT COUNT(*) as count
+               FROM scraper_failures
+               WHERE occurred_at >= ? AND level = 'critical'""",
+            (cutoff_str,)
+        )
+        critical_24h = critical_result[0]["count"] if critical_result else 0
+
+        # Get warning failures count
+        warning_result = db.execute(
+            """SELECT COUNT(*) as count
+               FROM scraper_failures
+               WHERE occurred_at >= ? AND level = 'warning'""",
+            (cutoff_str,)
+        )
+        warning_24h = warning_result[0]["count"] if warning_result else 0
+
+        # Get top 5 errors grouped by first 50 chars of message
+        top_errors_result = db.execute(
+            """SELECT SUBSTR(error_message, 1, 50) as message, COUNT(*) as count
+               FROM scraper_failures
+               WHERE occurred_at >= ?
+               GROUP BY SUBSTR(error_message, 1, 50)
+               ORDER BY count DESC
+               LIMIT 5""",
+            (cutoff_str,)
+        )
+
+        top_errors = [
+            {"message": row["message"], "count": row["count"]}
+            for row in top_errors_result
+        ]
+
+        # Return empty dict if no failures
+        if total_24h == 0:
+            return {}
+
+        return {
+            "total_24h": total_24h,
+            "critical_24h": critical_24h,
+            "warning_24h": warning_24h,
+            "top_errors": top_errors,
+        }
+
+    except Exception as e:
+        # On error, return empty dict (empty database/no failures case)
+        return {}
+
+    finally:
+        db.close()

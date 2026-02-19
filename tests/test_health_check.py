@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from trader.health_check import check_database_connection, check_scraper_status
+from trader.health_check import check_database_connection, check_scraper_status, check_recent_failures
 from trader.database import DatabaseConnection
 from trader.schema import create_tables
 
@@ -339,3 +339,344 @@ class TestCheckScraperStatus:
             result = check_scraper_status(db_path)
             assert result["last_run_at"] is not None
             assert isinstance(result["last_run_at"], str)
+
+
+class TestCheckRecentFailures:
+    """Test cases for check_recent_failures() function."""
+
+    def test_function_exists(self) -> None:
+        """Verify check_recent_failures function exists and is callable."""
+        from trader import health_check
+        assert hasattr(health_check, 'check_recent_failures')
+        assert callable(health_check.check_recent_failures)
+
+    def test_returns_dict(self) -> None:
+        """Verify check_recent_failures returns a dictionary."""
+        result = check_recent_failures()
+        assert isinstance(result, dict)
+
+    def test_returns_empty_dict_when_no_failures(self) -> None:
+        """Verify function returns empty dict when no failures exist."""
+        result = check_recent_failures()
+        assert result == {}
+
+    def test_returns_total_24h_key(self) -> None:
+        """Verify result contains 'total_24h' key when failures exist."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            db = DatabaseConnection(db_path)
+            create_tables(db)
+
+            # Insert a run and a failure
+            db.execute(
+                "INSERT INTO scraper_runs (status, items_count) VALUES (?, ?)",
+                ("running", 0)
+            )
+            run_id = db.execute("SELECT last_insert_rowid() as id")[0]["id"]
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, "Test error", "error", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            db.close()
+
+            result = check_recent_failures(db_path)
+            assert "total_24h" in result
+            assert isinstance(result["total_24h"], int)
+
+    def test_returns_critical_24h_key(self) -> None:
+        """Verify result contains 'critical_24h' key."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            db = DatabaseConnection(db_path)
+            create_tables(db)
+
+            db.execute(
+                "INSERT INTO scraper_runs (status, items_count) VALUES (?, ?)",
+                ("running", 0)
+            )
+            run_id = db.execute("SELECT last_insert_rowid() as id")[0]["id"]
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, "Critical error", "critical", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            db.close()
+
+            result = check_recent_failures(db_path)
+            assert "critical_24h" in result
+            assert isinstance(result["critical_24h"], int)
+
+    def test_returns_warning_24h_key(self) -> None:
+        """Verify result contains 'warning_24h' key."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            db = DatabaseConnection(db_path)
+            create_tables(db)
+
+            db.execute(
+                "INSERT INTO scraper_runs (status, items_count) VALUES (?, ?)",
+                ("running", 0)
+            )
+            run_id = db.execute("SELECT last_insert_rowid() as id")[0]["id"]
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, "Warning message", "warning", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            db.close()
+
+            result = check_recent_failures(db_path)
+            assert "warning_24h" in result
+            assert isinstance(result["warning_24h"], int)
+
+    def test_returns_top_errors_key(self) -> None:
+        """Verify result contains 'top_errors' key."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            db = DatabaseConnection(db_path)
+            create_tables(db)
+
+            db.execute(
+                "INSERT INTO scraper_runs (status, items_count) VALUES (?, ?)",
+                ("running", 0)
+            )
+            run_id = db.execute("SELECT last_insert_rowid() as id")[0]["id"]
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, "Test error", "error", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            db.close()
+
+            result = check_recent_failures(db_path)
+            assert "top_errors" in result
+            assert isinstance(result["top_errors"], list)
+
+    def test_counts_failures_in_last_24_hours(self) -> None:
+        """Verify function counts only failures in last 24 hours."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            db = DatabaseConnection(db_path)
+            create_tables(db)
+
+            now = datetime.now()
+            old_time = now - timedelta(hours=25)
+
+            db.execute(
+                "INSERT INTO scraper_runs (status, items_count) VALUES (?, ?)",
+                ("running", 0)
+            )
+            run_id = db.execute("SELECT last_insert_rowid() as id")[0]["id"]
+
+            # Insert old failure (25 hours ago)
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, "Old error", "error", old_time.strftime("%Y-%m-%d %H:%M:%S"))
+            )
+
+            # Insert recent failure (1 hour ago)
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, "Recent error", "error", now.strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            db.close()
+
+            result = check_recent_failures(db_path)
+            assert result["total_24h"] == 1  # Only recent failure counted
+
+    def test_counts_failures_by_level(self) -> None:
+        """Verify function counts critical and warning failures separately."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            db = DatabaseConnection(db_path)
+            create_tables(db)
+
+            now = datetime.now()
+
+            db.execute(
+                "INSERT INTO scraper_runs (status, items_count) VALUES (?, ?)",
+                ("running", 0)
+            )
+            run_id = db.execute("SELECT last_insert_rowid() as id")[0]["id"]
+
+            # Insert critical failure
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, "Critical error", "critical", now.strftime("%Y-%m-%d %H:%M:%S"))
+            )
+
+            # Insert warning failure
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, "Warning message", "warning", now.strftime("%Y-%m-%d %H:%M:%S"))
+            )
+
+            # Insert error level failure
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, "Regular error", "error", now.strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            db.close()
+
+            result = check_recent_failures(db_path)
+            assert result["total_24h"] == 3
+            assert result["critical_24h"] == 1
+            assert result["warning_24h"] == 1
+
+    def test_groups_errors_by_first_50_chars(self) -> None:
+        """Verify function groups errors by first 50 characters."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            db = DatabaseConnection(db_path)
+            create_tables(db)
+
+            now = datetime.now()
+
+            db.execute(
+                "INSERT INTO scraper_runs (status, items_count) VALUES (?, ?)",
+                ("running", 0)
+            )
+            run_id = db.execute("SELECT last_insert_rowid() as id")[0]["id"]
+
+            # Insert two failures with same first 50 chars
+            long_msg_1 = "This is a really long error message that goes on and on" + "x" * 100
+            long_msg_2 = "This is a really long error message that goes on and on" + "y" * 100
+
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, long_msg_1, "error", now.strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, long_msg_2, "error", now.strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            db.close()
+
+            result = check_recent_failures(db_path)
+            assert len(result["top_errors"]) == 1
+            assert result["top_errors"][0]["count"] == 2
+
+    def test_limits_top_errors_to_5(self) -> None:
+        """Verify function limits top_errors to 5 entries."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            db = DatabaseConnection(db_path)
+            create_tables(db)
+
+            now = datetime.now()
+
+            db.execute(
+                "INSERT INTO scraper_runs (status, items_count) VALUES (?, ?)",
+                ("running", 0)
+            )
+            run_id = db.execute("SELECT last_insert_rowid() as id")[0]["id"]
+
+            # Insert 7 different errors
+            for i in range(7):
+                db.execute(
+                    """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                       VALUES (?, ?, ?, ?)""",
+                    (run_id, f"Error number {i}", "error", now.strftime("%Y-%m-%d %H:%M:%S"))
+                )
+            db.close()
+
+            result = check_recent_failures(db_path)
+            assert len(result["top_errors"]) == 5
+
+    def test_top_errors_sorted_by_count_desc(self) -> None:
+        """Verify top_errors are sorted by count in descending order."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            db = DatabaseConnection(db_path)
+            create_tables(db)
+
+            now = datetime.now()
+
+            db.execute(
+                "INSERT INTO scraper_runs (status, items_count) VALUES (?, ?)",
+                ("running", 0)
+            )
+            run_id = db.execute("SELECT last_insert_rowid() as id")[0]["id"]
+
+            # Insert errors: one appears 5 times, another 3 times, another 1 time
+            for i in range(5):
+                db.execute(
+                    """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                       VALUES (?, ?, ?, ?)""",
+                    (run_id, "Common error", "error", now.strftime("%Y-%m-%d %H:%M:%S"))
+                )
+            for i in range(3):
+                db.execute(
+                    """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                       VALUES (?, ?, ?, ?)""",
+                    (run_id, "Medium error", "error", now.strftime("%Y-%m-%d %H:%M:%S"))
+                )
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, "Rare error", "error", now.strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            db.close()
+
+            result = check_recent_failures(db_path)
+            assert result["top_errors"][0]["message"] == "Common error"
+            assert result["top_errors"][0]["count"] == 5
+            assert result["top_errors"][1]["message"] == "Medium error"
+            assert result["top_errors"][1]["count"] == 3
+
+    def test_top_errors_item_structure(self) -> None:
+        """Verify each top_errors item has 'message' and 'count' keys."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            db = DatabaseConnection(db_path)
+            create_tables(db)
+
+            now = datetime.now()
+
+            db.execute(
+                "INSERT INTO scraper_runs (status, items_count) VALUES (?, ?)",
+                ("running", 0)
+            )
+            run_id = db.execute("SELECT last_insert_rowid() as id")[0]["id"]
+            db.execute(
+                """INSERT INTO scraper_failures (run_id, error_message, level, occurred_at)
+                   VALUES (?, ?, ?, ?)""",
+                (run_id, "Test error", "error", now.strftime("%Y-%m-%d %H:%M:%S"))
+            )
+            db.close()
+
+            result = check_recent_failures(db_path)
+            assert len(result["top_errors"]) > 0
+            error = result["top_errors"][0]
+            assert "message" in error
+            assert "count" in error
+            assert isinstance(error["message"], str)
+            assert isinstance(error["count"], int)
