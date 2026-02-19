@@ -27,7 +27,7 @@ Modules:
 
 from trader.item_parser import validate_html_structure, validate_price, deduplicate_items
 from trader.exceptions import ValidationError
-from trader.scraper import Scraper
+from trader.scraper import Scraper, ScraperState
 from trader.database import DatabaseConnection, get_connection
 from trader.logging_utils import JsonFormatter, WebhookHandler
 
@@ -41,6 +41,7 @@ __all__ = [
     "ValidationError",
     # Scraping
     "Scraper",
+    "ScraperState",
     # Database
     "DatabaseConnection",
     "get_connection",
