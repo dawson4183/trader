@@ -1,0 +1,193 @@
+# Progress Log for Run: 3c8591e9-6312-49f7-90bb-0c231190a494
+# Branch: feature/health-checks-alerts
+
+## Stories Completed
+
+### Story 1.0: Create database module with connection management
+- Status: COMPLETED (completed before this session)
+- Files: trader/database.py, tests/test_database.py
+
+### Story 2.0: Create database schema for health tracking
+- Status: COMPLETED (completed before this session)
+- Files: trader/schema.py, tests/test_schema.py
+
+### Story 3.0: Create scraper module with status tracking
+- Status: COMPLETED
+- Commit: feat: 3.0 - Create scraper module with status tracking
+- Files Added:
+  - trader/scraper.py: Scraper class with status tracking
+  - tests/test_scraper.py: Comprehensive tests for scraper functionality
+
+## Implementation Summary
+
+### Scraper Module (trader/scraper.py):
+
+**Class: Scraper**
+
+1. **Initialization**
+   - Constructor accepts optional DatabaseConnection or creates new one
+   - Ensures tables exist via create_tables()
+   - Maintains current_run_id state
+
+2. **start_run()**
+   - Creates entry in scraper_runs table with 'running' status
+   - Raises RuntimeError if run already in progress
+   - Returns the ID of the created run record
+
+3. **end_run(status, items_count)**
+   - Updates run record with completion status ('completed' or 'failed')
+   - Records items_count and ended_at timestamp
+   - Raises RuntimeError if no run active
+   - Raises ValueError if 'running' status provided
+
+4. **record_failure(error_message, level)**
+   - Inserts record into scraper_failures table
+   - Creates failed run if no active run exists
+   - Supports levels: 'warning', 'error', 'critical'
+   - Returns failure record ID
+
+5. **get_status()**
+   - Returns 'idle': no active runs and no recent errors
+   - Returns 'running': active run in progress
+   - Returns 'error': recent failures or last run failed
+   - Detects orphaned runs in database (crash recovery)
+
+6. **get_current_run_id()**
+   - Returns ID of active run or None
+
+7. **get_run_history(limit)**
+   - Returns list of run records
+   - Orders by started_at DESC
+
+8. **get_recent_failures(limit)**
+   - Returns list of failure records
+   - Orders by occurred_at DESC
+
+### Test Coverage (39 tests in tests/test_scraper.py):
+
+**TestScraperClass: 3 tests**
+- test_scraper_class_exists
+- test_scraper_init_with_default_db
+- test_scraper_init_with_custom_db
+- test_scraper_creates_tables_on_init
+
+**TestStartRun: 4 tests**
+- test_start_run_creates_entry
+- test_start_run_sets_current_run_id
+- test_start_run_raises_when_run_in_progress
+- test_start_run_returns_unique_ids
+
+**TestEndRun: 7 tests**
+- test_end_run_updates_status
+- test_end_run_updates_items_count
+- test_end_run_sets_ended_at
+- test_end_run_clears_current_run_id
+- test_end_run_accepts_failed_status
+- test_end_run_raises_when_no_run_active
+- test_end_run_rejects_running_status
+
+**TestRecordFailure: 4 tests**
+- test_record_failure_inserts_into_table
+- test_record_failure_accepts_warning_level
+- test_record_failure_accepts_critical_level
+- test_record_failure_creates_run_if_none_active
+
+**TestGetStatus: 6 tests**
+- test_get_status_returns_idle_initially
+- test_get_status_returns_running_after_start
+- test_get_status_returns_idle_after_completed_run
+- test_get_status_returns_error_after_failed_run
+- test_get_status_returns_error_with_recent_failures
+- test_get_status_detects_running_in_database
+
+**TestGetCurrentRunId: 3 tests**
+- test_get_current_run_id_returns_none_initially
+- test_get_current_run_id_returns_id_during_run
+- test_get_current_run_id_returns_none_after_end
+
+**TestGetRunHistory: 4 tests**
+- test_get_run_history_returns_list
+- test_get_run_history_returns_runs
+- test_get_run_history_respects_limit
+- test_get_run_history_orders_by_started_at_desc
+
+**TestGetRecentFailures: 4 tests**
+- test_get_recent_failures_returns_list
+- test_get_recent_failures_returns_failures
+- test_get_recent_failures_respects_limit
+- test_get_recent_failures_orders_by_occurred_at_desc
+
+**TestIntegration: 3 tests**
+- test_full_scraper_workflow
+- test_multiple_runs
+- test_scraper_with_context_manager_db
+
+## Codebase Patterns
+
+### Scraper Initialization Pattern:
+```python
+from trader.scraper import Scraper
+from trader.database import DatabaseConnection
+
+# With default in-memory database
+scraper = Scraper()
+
+# With custom database connection
+with DatabaseConnection() as db:
+    scraper = Scraper(db)
+```
+
+### Scraper Run Lifecycle Pattern:
+```python
+scraper = Scraper()
+
+try:
+    run_id = scraper.start_run()
+    # ... do scraping work ...
+    items_count = 100
+    scraper.end_run("completed", items_count)
+except Exception as e:
+    scraper.record_failure(str(e), "error")
+    scraper.end_run("failed")
+```
+
+### Status Checking Pattern:
+```python
+status = scraper.get_status()  # Returns: "idle" | "running" | "error"
+
+if status == "running":
+    run_id = scraper.get_current_run_id()
+    print(f"Run {run_id} is in progress")
+elif status == "error":
+    failures = scraper.get_recent_failures(limit=5)
+    for failure in failures:
+        print(f"  {failure['level']}: {failure['error_message']}")
+```
+
+## Type Annotations
+
+The module uses strong typing:
+- `StatusType = Literal["idle", "running", "error"]`
+- `RunStatusType = Literal["running", "completed", "failed"]`
+- `FailureLevelType = Literal["warning", "error", "critical"]`
+
+## Test Results
+- All 39 scraper tests pass
+- mypy typecheck passes for trader/scraper.py, trader/schema.py, trader/database.py
+- All 115 tests in test suite pass
+
+## Codebase Patterns Added/Updated
+
+### Pattern: Status Tracking Scraper
+- Create entry in runs table on start
+- Update entry on completion/failure
+- Record failures with severity levels
+- Provide status query methods
+
+## Stories Remaining
+- Story 4.0: Create health_check module with database connection check
+- Story 4.1: Create health_check module with scraper status check
+- Story 4.2: Create health_check module with recent failures check
+- Story 5.0: Integrate health check CLI flag
+- Story 6.0: Create alert module with webhook and logging
+- Story 7.0: Integrate alerts into scraper on critical failures
