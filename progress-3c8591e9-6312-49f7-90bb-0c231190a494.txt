@@ -184,10 +184,75 @@ The module uses strong typing:
 - Record failures with severity levels
 - Provide status query methods
 
+### Story 6.0: Add check_recent_failures() to health_check.py
+- Status: COMPLETED
+- Commit: feat: 6.0 - Add check_recent_failures() to health_check.py
+- Files Modified:
+  - trader/health_check.py: Added check_recent_failures() function
+  - tests/test_health_check.py: Added tests for check_recent_failures()
+
+**Function: check_recent_failures(db_path)**
+- Returns dict with 'total_24h', 'critical_24h', 'warning_24h', 'top_errors'
+- Queries scraper_failures table for failures in last 24 hours
+- Groups errors by first 50 characters of message (SUBSTR function)
+- 'top_errors' is list of {message, count}, limited to top 5 most frequent
+- Returns empty dict {} if no failures in database
+- Counts only failures with occurred_at >= now - 24 hours
+
+**Query Logic:**
+- Calculate cutoff time as datetime.now(timezone.utc) - timedelta(hours=24)
+- Format as 'YYYY-MM-DD HH:MM:SS' for SQLite comparison
+- Total count: COUNT(*) WHERE occurred_at >= cutoff
+- Critical count: COUNT(*) WHERE occurred_at >= cutoff AND level = 'critical'
+- Warning count: COUNT(*) WHERE occurred_at >= cutoff AND level = 'warning'
+- Top errors: GROUP BY SUBSTR(error_message, 1, 50), ORDER BY count DESC, LIMIT 5
+
+**Test Coverage (13 tests):**
+- test_function_exists
+- test_returns_dict
+- test_returns_empty_dict_when_no_failures
+- test_returns_total_24h_key
+- test_returns_critical_24h_key
+- test_returns_warning_24h_key
+- test_returns_top_errors_key
+- test_counts_failures_in_last_24_hours
+- test_counts_failures_by_level
+- test_groups_errors_by_first_50_chars
+- test_limits_top_errors_to_5
+- test_top_errors_sorted_by_count_desc
+- test_top_errors_item_structure
+
+**Test Results:**
+- All 39 health check tests pass
+- mypy typecheck passes
+- All 154 tests in test suite pass
+
+**Codebase Patterns Added:**
+
+### Pattern: Recent Failures Health Check
+```python
+from trader.health_check import check_recent_failures
+
+# Check recent failures
+result = check_recent_failures()
+# Returns: {
+#   'total_24h': 10,
+#   'critical_24h': 2,
+#   'warning_24h': 3,
+#   'top_errors': [
+#     {'message': 'Connection timeout', 'count': 5},
+#     {'message': 'Rate limit exceeded', 'count': 3}
+#   ]
+# }
+# Or if no failures: {}
+```
+
+**Guidelines:**
+- Query scraper_failures table with WHERE occurred_at >= cutoff
+- Use SUBSTR(error_message, 1, 50) for grouping
+- Limit top errors to 5 with ORDER BY count DESC
+- Return empty dict if total_24h == 0
+- Use timezone.utc for consistent time calculations
+
 ## Stories Remaining
-- Story 4.0: Create health_check module with database connection check
-- Story 4.1: Create health_check module with scraper status check
-- Story 4.2: Create health_check module with recent failures check
-- Story 5.0: Integrate health check CLI flag
-- Story 6.0: Create alert module with webhook and logging
-- Story 7.0: Integrate alerts into scraper on critical failures
+- Story 7.0: Integrate health check CLI flag
