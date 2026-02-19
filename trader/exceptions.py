@@ -1,56 +1,87 @@
-"""Custom exceptions for the trader package."""
+"""Custom exceptions for the trader package.
+
+This module defines custom exception classes used throughout the trader
+package for handling validation and parsing errors.
+
+Example:
+    >>> from trader.exceptions import ValidationError
+    >>> try:
+    ...     validate_price(0)
+    ... except ValidationError as e:
+    ...     print(f"Validation failed: {e}")
+"""
 
 
 class ValidationError(Exception):
-    """Raised when data validation fails.
-
-    Args:
-        message: A descriptive error message explaining the validation failure.
+    """Exception raised when data validation fails.
+    
+    This exception is raised in various scenarios:
+    - When HTML structure validation fails (missing required selectors)
+    - When price validation fails (price <= 0)
+    - When item deduplication encounters malformed data (missing item_hash)
+    
+    Attributes:
+        message: Explanation of the validation error.
+    
+    Example:
+        >>> raise ValidationError("Price must be greater than 0")
+        Traceback (most recent call last):
+          ...
+        trader.exceptions.ValidationError: Price must be greater than 0
     """
-
-    def __init__(self, message: str) -> None:
-        """Initialize ValidationError with a descriptive message.
-
-        Args:
-            message: The error message describing the validation failure.
-        """
-        self.message = message
-        super().__init__(self.message)
+    pass
 
 
 class MaxRetriesExceededError(Exception):
-    """Raised when maximum retry attempts are exhausted.
-
-    Args:
-        message: A descriptive error message explaining that all retries failed.
+    """Exception raised when all retry attempts are exhausted.
+    
+    This exception is raised by the retry decorator when the maximum
+    number of retry attempts has been reached without success.
+    
+    Attributes:
+        message: Explanation of the failure.
+        __cause__: The original exception that caused the final failure.
+    
+    Example:
+        >>> raise MaxRetriesExceededError("Operation failed after 5 attempts")
+        Traceback (most recent call last):
+          ...
+        trader.exceptions.MaxRetriesExceededError: Operation failed after 5 attempts
     """
-
-    def __init__(self, message: str) -> None:
-        """Initialize MaxRetriesExceededError with a descriptive message.
-
-        Args:
-            message: The error message describing the retry exhaustion.
-        """
-        self.message = message
-        super().__init__(self.message)
+    pass
 
 
 class CircuitOpenError(Exception):
-    """Raised when circuit breaker is OPEN.
-
-    This exception is raised by the CircuitBreaker when the circuit
-    is in OPEN state, meaning calls are rejected without attempting
-    the underlying operation. This protects downstream services from
-    being overwhelmed when failures exceed the threshold.
-
+    """Exception raised when circuit breaker is open.
+    
+    This exception is raised by the circuit breaker when it is in
+    the OPEN state and rejects further calls.
+    
     Attributes:
-        message: Explanation of why the circuit is open.
-        failure_count: Number of consecutive failures that caused the circuit to open.
-
+        message: Explanation including failure count and threshold.
+    
     Example:
         >>> raise CircuitOpenError("Circuit breaker is OPEN after 10 failures")
         Traceback (most recent call last):
           ...
         trader.exceptions.CircuitOpenError: Circuit breaker is OPEN after 10 failures
+    """
+    pass
+
+
+class ShutdownRequestedError(Exception):
+    """Exception raised when shutdown signal is received.
+    
+    This exception is raised by the scraper when a SIGINT or SIGTERM
+    signal is received, to gracefully exit after the current URL.
+    
+    Attributes:
+        message: Explanation of the shutdown request.
+    
+    Example:
+        >>> raise ShutdownRequestedError("SIGINT received, shutting down gracefully")
+        Traceback (most recent call last):
+          ...
+        trader.exceptions.ShutdownRequestedError: SIGINT received
     """
     pass

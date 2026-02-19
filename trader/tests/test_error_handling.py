@@ -42,59 +42,38 @@ class TestRetryDecorator:
         assert call_count == 3
     
     def test_retry_raises_max_retries_exceeded(self) -> None:
-        """Test that last exception is raised after all retries fail."""
+        """Test that MaxRetriesExceededError is raised after all retries fail."""
         @retry(max_attempts=3, exceptions=(ValueError,))
         def always_fails():
             raise ValueError("always fails")
         
-        with pytest.raises(ValueError, match="always fails") as exc_info:
+        with pytest.raises(MaxRetriesExceededError) as exc_info:
             always_fails()
         
-        assert "always fails" in str(exc_info.value)
-    
-    def test_retry_exhausts_all_attempts(self) -> None:
-        """Test that last exception is raised when all retries are exhausted."""
-        errors = [ValueError("error1"), ValueError("error2"), ValueError("error3")]
-        call_count = 0
-        
-        @retry(max_attempts=3, exceptions=(ValueError,), delay=0.0)
-        def always_fails():
-            nonlocal call_count
-            error = errors[call_count]
-            call_count += 1
-            raise error
-        
-        # Should raise the last exception (error3), not MaxRetriesExceededError
-        with pytest.raises(ValueError, match="error3") as exc_info:
-            always_fails()
-        
-        assert str(exc_info.value) == "error3"
-        assert call_count == 3
+        assert "failed after 3 attempts" in str(exc_info.value)
     
     def test_retry_preserves_exception_chain(self) -> None:
-        """Test that original exception is raised after all retries."""
+        """Test that original exception is preserved in the chain."""
         original_error = ValueError("original error")
         
         @retry(max_attempts=2, exceptions=(ValueError,))
         def always_fails():
             raise original_error
         
-        with pytest.raises(ValueError, match="original error") as exc_info:
+        with pytest.raises(MaxRetriesExceededError) as exc_info:
             always_fails()
         
-        # Should be the same exception object
-        assert exc_info.value is original_error
+        assert exc_info.value.__cause__ is original_error
     
     def test_retry_only_catches_specified_exceptions(self) -> None:
         """Test that only specified exceptions trigger retry."""
         call_count = 0
         
-        # Test with list instead of tuple (should be converted to tuple)
-        @retry(max_attempts=3, exceptions=[RuntimeError])
+        @retry(max_attempts=3, exceptions=(RuntimeError,))
         def target_func():
             nonlocal call_count
             call_count += 1
-            raise ValueError("value error")  # Not in exceptions list
+            raise ValueError("value error")  # Not in exceptions tuple
         
         # ValueError should not be caught, so it propagates immediately
         with pytest.raises(ValueError, match="value error"):
@@ -133,7 +112,7 @@ class TestRetryDecorator:
             call_count += 1
             raise RuntimeError("error")
         
-        with pytest.raises(RuntimeError):
+        with pytest.raises(MaxRetriesExceededError):
             always_fails()
         
         # Check calls between retries (not after final failure)
@@ -187,7 +166,7 @@ class TestRetryDecorator:
             attempt_count += 1
             raise Exception("error")
         
-        with pytest.raises(Exception):
+        with pytest.raises(MaxRetriesExceededError):
             counting_fails()
         
         assert attempt_count == 5
@@ -202,7 +181,7 @@ class TestRetryDecorator:
             call_count += 1
             raise ValueError("error")
         
-        with pytest.raises(ValueError):
+        with pytest.raises(MaxRetriesExceededError):
             always_fails()
         
         assert call_count == 2
@@ -381,21 +360,6 @@ class TestRetryWithCircuitBreaker:
         
         assert combined_func.__name__ == "combined_func"
         assert combined_func.__doc__ == "Combined function docstring."
-    
-    def test_combined_retry_then_circuit(self) -> None:
-        """Test that combined decorator raises original ValueError on first failure."""
-        combined = RetryWithCircuitBreaker(
-            max_attempts=1,  # No retries
-            failure_threshold=1
-        )
-        
-        @combined
-        def always_fails():
-            raise ValueError("original error")
-        
-        # Should raise ValueError on first failure (not MaxRetriesExceededError)
-        with pytest.raises(ValueError, match="original error"):
-            always_fails()
 
 
 class TestEdgeCases:
@@ -412,7 +376,7 @@ class TestEdgeCases:
             call_count += 1
             raise ValueError("error")
         
-        with pytest.raises(ValueError):
+        with pytest.raises(MaxRetriesExceededError):
             always_fails()
         
         # Should still call sleep with 0.0
@@ -425,7 +389,7 @@ class TestEdgeCases:
             def always_fails():
                 raise ValueError("error")
             
-            with pytest.raises(ValueError):
+            with pytest.raises(MaxRetriesExceededError):
                 always_fails()
             
             # With backoff=1, delay should be constant

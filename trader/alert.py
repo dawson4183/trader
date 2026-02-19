@@ -1,8 +1,7 @@
-"""Alert module for sending webhook notifications.
+"""Alert module for sending notifications via webhooks.
 
-Provides functionality to send alerts to a configured webhook endpoint
-for monitoring and notification purposes. Also logs all alerts to the
-standard Python logging system.
+This module provides functionality to send alerts with different severity
+levels via webhook calls. Alerts are also logged for audit purposes.
 """
 
 import json
@@ -11,89 +10,109 @@ import os
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Dict, Literal, Optional, Union
 
-# Module-level logger
-logger = logging.getLogger(__name__)
+# Create module-level logger
+logger = logging.getLogger("trader.alert")
 
+# Alert level type
+AlertLevel = Literal["info", "warning", "error", "critical"]
 
-AlertLevelType = Literal["info", "warning", "error", "critical"]
-
-VALID_LEVELS = {"info", "warning", "error", "critical"}
-
-# Map alert levels to logging levels
-LEVEL_TO_LOGGING: dict[AlertLevelType, int] = {
-    "critical": logging.CRITICAL,
-    "error": logging.ERROR,
-    "warning": logging.WARNING,
-    "info": logging.INFO,
-}
+# Default webhook timeout in seconds
+DEFAULT_WEBHOOK_TIMEOUT = 30
 
 
-def send_alert(message: str, level: AlertLevelType) -> bool:
-    """Send an alert to the configured webhook endpoint.
+def send_alert(
+    message: str,
+    level: AlertLevel = "info"
+) -> bool:
+    """Send an alert via webhook and log it.
 
-    Sends a POST request to the webhook URL configured via the
-    WEBHOOK_URL environment variable with a JSON payload containing
-    the alert details.
+    Sends a POST request to the configured webhook URL with a JSON
+    payload containing the alert message, level, timestamp, and source.
+    The alert is also logged at the appropriate level.
 
     Args:
         message: The alert message to send.
-        level: The severity level of the alert. Must be one of:
-               'info', 'warning', 'error', 'critical'
+        level: The alert level (info, warning, error, critical).
+            Defaults to "info".
 
     Returns:
-        True if the webhook returns a 2xx status code, False otherwise.
-        Returns False if WEBHOOK_URL is not configured or if the level
-        is invalid.
+        True if the webhook request was successful (2xx response),
+        False otherwise (4xx, 5xx, network errors, or timeouts).
 
     Example:
-        >>> success = send_alert("Database connection failed", "critical")
-        >>> print(f"Alert sent: {success}")
+        >>> send_alert("Database connection established", "info")
+        True
+        >>> send_alert("Failed to connect to database", "critical")
+        True
     """
-    # Validate level
-    if level not in VALID_LEVELS:
-        return False
-
     # Get webhook URL from environment
     webhook_url = os.environ.get("WEBHOOK_URL")
+    
+    # Log the alert at the appropriate level
+    log_alert(message, level)
+    
+    # If no webhook URL configured, just logging is sufficient
     if not webhook_url:
-        return False
-
-    # Build payload
-    payload = {
+        return True
+    
+    # Build the webhook payload
+    payload: Dict[str, Any] = {
         "message": message,
         "level": level,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "source": "trader.alert",
     }
-
-    # Log the alert before attempting webhook call
-    # Log format includes timestamp (added by logging), level, message, and source module
-    log_level = LEVEL_TO_LOGGING[level]
-    logger.log(log_level, "[ALERT %s] %s", level.upper(), message)
-
-    # Send POST request
+    
     try:
+        # Create the request
+        data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             webhook_url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(data)),
+            },
             method="POST",
         )
-
-        with urllib.request.urlopen(req, timeout=30) as response:
-            # Check for 2xx status code
-            status: int = response.status
-            return 200 <= status < 300
-
+        
+        # Send the request with timeout
+        with urllib.request.urlopen(req, timeout=DEFAULT_WEBHOOK_TIMEOUT) as response:
+            # Check if response is 2xx (200-299)
+            if 200 <= response.status < 300:
+                return True
+            return False
+            
     except urllib.error.HTTPError as e:
-        # HTTP error (non-2xx status code)
-        code: int = e.code
-        return 200 <= code < 300
+        # HTTP errors (4xx, 5xx) return False
+        return False
     except urllib.error.URLError:
-        # Connection error, invalid URL, etc.
+        # Network errors return False
+        return False
+    except TimeoutError:
+        # Timeout errors return False
         return False
     except Exception:
-        # Any other error (timeout, etc.)
+        # Any other error returns False
         return False
+
+
+def log_alert(message: str, level: AlertLevel) -> None:
+    """Log an alert at the appropriate level.
+
+    Args:
+        message: The alert message to log.
+        level: The alert level.
+    """
+    log_message = f"[ALERT {level.upper()}] {message}"
+    
+    if level == "info":
+        logger.info(log_message)
+    elif level == "warning":
+        logger.warning(log_message)
+    elif level == "error":
+        logger.error(log_message)
+    elif level == "critical":
+        logger.critical(log_message)
