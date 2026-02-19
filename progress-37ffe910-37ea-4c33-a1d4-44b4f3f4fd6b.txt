@@ -1,0 +1,51 @@
+# Progress Log
+
+## Run ID: 37ffe910-37ea-4c33-a1d4-44b4f3f4fd6b
+
+### Completed Stories
+
+#### Story 1.0: Set up test infrastructure and trader/tests/ directory structure
+- Created trader/tests/ directory with __init__.py
+- Created trader/tests/conftest.py with shared pytest fixtures:
+  - sample_html_basic - Basic HTML with item structure
+  - sample_html_no_price - HTML without price element
+  - sample_html_no_title - HTML without title element
+  - sample_html_empty - Empty HTML fixture
+  - sample_html_invalid - Malformed HTML fixture
+  - sample_html_multiple_items - HTML with multiple items
+  - sample_selectors - Standard CSS selectors dict
+  - sample_item - Sample parsed item dict
+  - sample_items_list - List of items for deduplication testing
+  - price_strings_valid - Valid price strings with expected values
+  - price_strings_invalid - Invalid price strings for error testing
+- Created trader/tests/test_infrastructure.py to verify fixtures work
+- Updated pyproject.toml to use Python 3.9+ (was 3.8)
+- pytest discovers tests in trader/tests/ successfully (13 tests)
+- Typecheck passes with mypy
+
+### Codebase Patterns
+
+#### Test Infrastructure
+- trader/tests/ - Test directory inside the package (co-located tests)
+- conftest.py - Shared fixtures for all tests in the package
+- Fixtures return properly typed data using type hints
+- HTML fixtures use BeautifulSoup-compatible HTML strings
+
+#### Project Structure
+- trader/ - Main package directory
+- trader/tests/ - Test directory mirroring package structure
+- tests/ - Existing root-level tests (legacy/duplication allowed)
+- pyproject.toml - Project configuration with pytest and mypy settings
+
+#### Type Checking
+- Use mypy with --no-site-packages to avoid venv issues
+- Python 3.9+ required for pattern matching compatibility
+- Add strict mypy settings in pyproject.toml
+
+#### Testing
+- pytest as the test runner
+- Test files prefixed with test_
+- Test classes prefixed with Test*
+- Test functions prefixed with test_
+- Fixtures defined in conftest.py are auto-discovered
+- Use pytest.raises() for exception testing
