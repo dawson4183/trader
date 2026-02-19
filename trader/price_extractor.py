@@ -18,7 +18,66 @@ CURRENCY_SYMBOLS: Dict[str, str] = {
 CURRENCY_CODES = ['USD', 'EUR', 'GBP', 'JPY', 'INR', 'CAD', 'AUD']
 
 
-def extract_price(price_str: Optional[str]) -> Dict[str, Any]:
+def extract_price(text: str) -> float:
+    """
+    Extract price value from a string, returning a float.
+    
+    Handles currency symbols ($, €, £), whitespace stripping,
+    and common numeric formats.
+    
+    Args:
+        text: String containing price (e.g., "$10.99", "€20.50", "  £15.00  ")
+        
+    Returns:
+        The extracted price as a float
+        
+    Raises:
+        ValidationError: If price cannot be parsed or is invalid
+    """
+    if text is None:
+        raise ValidationError("Price text cannot be None")
+    
+    if not isinstance(text, str):
+        raise ValidationError("Price text must be a string")
+    
+    # Strip whitespace
+    text = text.strip()
+    
+    if not text:
+        raise ValidationError("Price text cannot be empty")
+    
+    # Remove currency symbols
+    text = text.replace('$', '').replace('€', '').replace('£', '').replace('¥', '').replace('₹', '')
+    
+    # Remove currency codes if present
+    for code in CURRENCY_CODES:
+        text = text.replace(code, '').replace(code.lower(), '')
+    
+    # Clean up any remaining whitespace
+    text = text.strip()
+    
+    if not text:
+        raise ValidationError("No numeric value found in price text")
+    
+    # Remove commas used as thousands separators
+    text = text.replace(',', '')
+    
+    # Handle decimal points - already in correct format
+    try:
+        price = float(text)
+    except ValueError:
+        raise ValidationError(f"Could not parse price from: '{text}'")
+    
+    if price < 0:
+        raise ValidationError(f"Price cannot be negative: {price}")
+    
+    if price == 0:
+        raise ValidationError("Price cannot be zero")
+    
+    return price
+
+
+def extract_price_with_currency(price_str: Optional[str]) -> Dict[str, Any]:
     """
     Extract price value and currency from a string.
     
