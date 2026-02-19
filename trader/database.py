@@ -172,3 +172,66 @@ def get_connection(pool: ConnectionPool) -> Generator[sqlite3.Connection, None, 
         yield conn
     finally:
         pool.release(conn)
+
+
+class Transaction:
+    """Transaction context manager for database operations.
+    
+    Wraps database operations in transactions with automatic commit on
+    success and rollback on exception. Works with connections from the
+    connection pool.
+    
+    Example:
+        pool = ConnectionPool("test.db")
+        with pool:
+            with Transaction(get_current_connection()):
+                cursor.execute("INSERT INTO items ...")
+    """
+    
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        """Initialize the transaction with a database connection.
+        
+        Args:
+            connection: An active SQLite database connection.
+        """
+        self.connection: sqlite3.Connection = connection
+        self.cursor: Optional[sqlite3.Cursor] = None
+    
+    def __enter__(self) -> sqlite3.Cursor:
+        """Enter the transaction context and return a cursor.
+        
+        Returns:
+            A cursor object for executing database operations.
+        """
+        self.cursor = self.connection.cursor()
+        return self.cursor
+    
+    def __exit__(
+        self,
+        exc_type: Optional[type],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[object]
+    ) -> None:
+        """Exit the transaction context with commit/rollback.
+        
+        If no exception occurred, commits the transaction.
+        If an exception occurred, rolls back the transaction and
+        propagates the exception.
+        
+        Args:
+            exc_type: The exception type if an exception occurred.
+            exc_val: The exception value if an exception occurred.
+            exc_tb: The traceback if an exception occurred.
+        """
+        try:
+            if exc_type is None:
+                # No exception - commit the transaction
+                self.connection.commit()
+            else:
+                # Exception occurred - rollback the transaction
+                self.connection.rollback()
+        finally:
+            # Clean up the cursor
+            if self.cursor is not None:
+                self.cursor.close()
+                self.cursor = None
