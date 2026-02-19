@@ -59,3 +59,24 @@ class MaxRetriesExceededError(Exception):
         """
         self.message = message
         super().__init__(self.message)
+
+
+class CircuitBreakerOpenError(Exception):
+    """Raised when the circuit breaker is open and rejects calls.
+
+    This exception is raised by the circuit breaker when it is in the
+    OPEN state and rejects incoming requests to protect the downstream
+    service.
+
+    Attributes:
+        message: A descriptive error message explaining the circuit state.
+    """
+
+    def __init__(self, message: str) -> None:
+        """Initialize CircuitBreakerOpenError with a descriptive message.
+
+        Args:
+            message: The error message describing the circuit breaker state.
+        """
+        self.message = message
+        super().__init__(self.message)

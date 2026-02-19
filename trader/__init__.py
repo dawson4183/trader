@@ -16,7 +16,7 @@ Attributes:
     __version__: The version of the trader package.
 """
 
-from trader.exceptions import ValidationError
+from trader.exceptions import ValidationError, MaxRetriesExceededError, CircuitBreakerOpenError
 from trader.item_parser import ItemParser, parse_item
 from trader.validators import (
     deduplicate_items,
@@ -37,6 +37,8 @@ __version__ = "0.1.0"
 __all__ = [
     "ItemParser",
     "ValidationError",
+    "MaxRetriesExceededError",
+    "CircuitBreakerOpenError",
     "deduplicate_items",
     "parse_item",
     "validate_html_structure",
