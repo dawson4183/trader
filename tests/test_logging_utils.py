@@ -2,13 +2,16 @@
 
 import json
 import logging
+import os
+import shutil
 import urllib.request
 from datetime import datetime, timezone
+from logging.handlers import TimedRotatingFileHandler
 from unittest.mock import Mock, patch
 
 import pytest
 
-from trader.logging_utils import JsonFormatter, WebhookHandler
+from trader.logging_utils import JsonFormatter, WebhookHandler, setup_logging
 
 
 class TestJsonFormatterBasics:
@@ -347,13 +350,13 @@ class TestWebhookHandlerBasics:
 
     def test_webhook_handler_uses_config_webhook_url(self):
         """WebhookHandler should use config.WEBHOOK_URL when not provided."""
-        with patch('trader.logging_utils.config.WEBHOOK_URL', 'http://config.com/webhook'):
+        with patch('trader.logging_utils.config_module.WEBHOOK_URL', 'http://config.com/webhook'):
             handler = WebhookHandler()
             assert handler.webhook_url == 'http://config.com/webhook'
 
     def test_webhook_handler_uses_provided_url_over_config(self):
         """WebhookHandler should prefer provided URL over config."""
-        with patch('trader.logging_utils.config.WEBHOOK_URL', 'http://config.com/webhook'):
+        with patch('trader.logging_utils.config_module.WEBHOOK_URL', 'http://config.com/webhook'):
             handler = WebhookHandler(webhook_url="http://provided.com/webhook")
             assert handler.webhook_url == "http://provided.com/webhook"
 
@@ -744,3 +747,340 @@ class TestWebhookHandlerIntegration:
         json_str = json.dumps(payload)
         parsed = json.loads(json_str)
         assert parsed == payload
+
+
+class TestSetupLoggingBasics:
+    """Test basic setup_logging functionality."""
+
+    def test_setup_logging_returns_logger(self):
+        """setup_logging should return a logger instance."""
+        # Clean up any existing log directory
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'):
+            logger = setup_logging()
+            assert isinstance(logger, logging.Logger)
+        
+        # Cleanup
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+
+    def test_setup_logging_exists(self):
+        """setup_logging function should exist in logging_utils."""
+        assert callable(setup_logging)
+
+
+class TestSetupLoggingDirectory:
+    """Test logs directory creation."""
+
+    def test_creates_logs_directory(self):
+        """setup_logging should create 'logs' directory if it doesn't exist."""
+        # Ensure logs directory doesn't exist
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+        
+        assert not os.path.exists('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'):
+            setup_logging()
+        
+        assert os.path.exists('logs')
+        assert os.path.isdir('logs')
+        
+        # Cleanup
+        shutil.rmtree('logs')
+
+    def test_does_not_fail_if_logs_directory_exists(self):
+        """setup_logging should not fail if 'logs' directory already exists."""
+        # Create logs directory
+        if not os.path.exists('logs'):
+            os.makedirs('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'):
+            # Should not raise
+            setup_logging()
+        
+        assert os.path.exists('logs')
+        
+        # Cleanup
+        shutil.rmtree('logs')
+
+
+class TestSetupLoggingHandlers:
+    """Test handler configuration."""
+
+    def test_creates_timed_rotating_file_handler(self):
+        """setup_logging should create TimedRotatingFileHandler."""
+        # Clean up
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'), \
+             patch('trader.logging_utils.config_module.LOG_RETENTION_DAYS', 7):
+            setup_logging()
+            
+            # Check for TimedRotatingFileHandler
+            file_handlers = [h for h in root_logger.handlers if isinstance(h, TimedRotatingFileHandler)]
+            assert len(file_handlers) == 1
+            
+            handler = file_handlers[0]
+            assert handler.when == 'D'  # Daily rotation
+            assert handler.interval == 86400  # 1 day in seconds (86400)
+            assert handler.backupCount == 7  # 7 day retention
+        
+        # Cleanup
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+
+    def test_file_handler_uses_json_formatter(self):
+        """TimedRotatingFileHandler should use JsonFormatter."""
+        # Clean up
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'):
+            setup_logging()
+            
+            # Find TimedRotatingFileHandler
+            file_handlers = [h for h in root_logger.handlers if isinstance(h, TimedRotatingFileHandler)]
+            assert len(file_handlers) == 1
+            
+            handler = file_handlers[0]
+            assert isinstance(handler.formatter, JsonFormatter)
+        
+        # Cleanup
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+
+    def test_creates_console_handler(self):
+        """setup_logging should create console StreamHandler."""
+        # Clean up
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'):
+            setup_logging()
+            
+            # Check for StreamHandler (console)
+            console_handlers = [h for h in root_logger.handlers 
+                              if isinstance(h, logging.StreamHandler) and not isinstance(h, TimedRotatingFileHandler)]
+            assert len(console_handlers) == 1
+        
+        # Cleanup
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+
+    def test_console_handler_uses_json_formatter(self):
+        """Console handler should use JsonFormatter."""
+        # Clean up
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'):
+            setup_logging()
+            
+            # Find StreamHandler that's not TimedRotatingFileHandler
+            console_handlers = [h for h in root_logger.handlers 
+                              if isinstance(h, logging.StreamHandler) and not isinstance(h, TimedRotatingFileHandler)]
+            assert len(console_handlers) == 1
+            
+            handler = console_handlers[0]
+            assert isinstance(handler.formatter, JsonFormatter)
+        
+        # Cleanup
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+
+    def test_creates_webhook_handler(self):
+        """setup_logging should create WebhookHandler."""
+        # Clean up
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'):
+            setup_logging()
+            
+            # Check for WebhookHandler
+            webhook_handlers = [h for h in root_logger.handlers if isinstance(h, WebhookHandler)]
+            assert len(webhook_handlers) == 1
+        
+        # Cleanup
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+
+    def test_webhook_handler_filtered_for_error_critical(self):
+        """WebhookHandler should be filtered for ERROR/CRITICAL only."""
+        # Clean up
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'):
+            setup_logging()
+            
+            # Find WebhookHandler
+            webhook_handlers = [h for h in root_logger.handlers if isinstance(h, WebhookHandler)]
+            assert len(webhook_handlers) == 1
+            
+            handler = webhook_handlers[0]
+            assert handler.level == logging.ERROR
+        
+        # Cleanup
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+
+
+class TestSetupLoggingIdempotency:
+    """Test that setup_logging is idempotent."""
+
+    def test_multiple_calls_are_idempotent(self):
+        """Calling setup_logging multiple times should not add duplicate handlers."""
+        # Clean up
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'):
+            # First call
+            setup_logging()
+            handler_count_after_first = len(root_logger.handlers)
+            
+            # Second call
+            setup_logging()
+            handler_count_after_second = len(root_logger.handlers)
+            
+            # Third call
+            setup_logging()
+            handler_count_after_third = len(root_logger.handlers)
+            
+            # Handler count should be the same
+            assert handler_count_after_first == handler_count_after_second
+            assert handler_count_after_second == handler_count_after_third
+        
+        # Cleanup
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+
+    def test_returns_same_logger_on_multiple_calls(self):
+        """Multiple calls should return the same logger instance."""
+        # Clean up
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'):
+            logger1 = setup_logging()
+            logger2 = setup_logging()
+            
+            assert logger1 is logger2
+        
+        # Cleanup
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+
+
+class TestSetupLoggingIntegration:
+    """Test integration with the logging system."""
+
+    def test_logs_to_file(self):
+        """setup_logging should enable logging to file."""
+        # Clean up
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'):
+            logger = setup_logging()
+            logger.info("Test message for file")
+            
+            # Flush and close handlers
+            for handler in logger.handlers:
+                handler.flush()
+                if hasattr(handler, 'close'):
+                    handler.close()
+            
+            # Read log file
+            with open('logs/test_trader.log', 'r') as f:
+                content = f.read()
+                assert "Test message for file" in content
+        
+        # Cleanup
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+
+    def test_log_output_is_json(self):
+        """Log output should be valid JSON."""
+        # Clean up
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
+        
+        # Reset root logger handlers
+        root_logger = logging.getLogger()
+        root_logger.handlers = []
+        
+        with patch('trader.logging_utils.config_module.LOG_FILE_PATH', 'logs/test_trader.log'):
+            logger = setup_logging()
+            logger.info("JSON test message", extra={"test_key": "test_value"})
+            
+            # Flush and close handlers
+            for handler in logger.handlers:
+                handler.flush()
+                if hasattr(handler, 'close'):
+                    handler.close()
+            
+            # Read log file
+            with open('logs/test_trader.log', 'r') as f:
+                content = f.read().strip()
+                # Should be valid JSON
+                parsed = json.loads(content)
+                assert parsed["message"] == "JSON test message"
+                assert parsed["context"]["test_key"] == "test_value"
+        
+        # Cleanup
+        if os.path.exists('logs'):
+            shutil.rmtree('logs')
