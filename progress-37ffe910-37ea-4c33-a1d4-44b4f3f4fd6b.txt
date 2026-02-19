@@ -105,3 +105,25 @@
 - Raise ValidationError with descriptive messages
 - Use BeautifulSoup for HTML parsing
 - Use .get_text(strip=True) to extract clean text content
+
+### Completed Stories
+
+#### Story 7.0: Create test_price_extractor.py with multi-currency support tests
+- Added TestExtractPriceMultiCurrency class to trader/tests/test_price_extractor.py:
+  - test_extract_price_usd_symbol - parses '$' prefixed prices correctly
+  - test_extract_price_euro_symbol - parses '€' prefixed prices correctly
+  - test_extract_price_gbp_symbol - parses '£' prefixed prices correctly
+  - test_extract_price_usd_code - parses 'USD' suffixed prices correctly
+  - test_extract_price_eur_code - parses 'EUR' suffixed prices correctly
+  - test_extract_price_mixed_format - handles 'Price: $10.99 USD' format
+  - test_extract_price_no_decimal - handles whole numbers like '$10'
+- All 7 multi-currency tests pass successfully
+- All 37 total tests in test_price_extractor.py pass
+- Typecheck passes for trader/price_extractor.py source code
+- Committed: feat: 7.0 - Create test_price_extractor.py with multi-currency support tests
+
+#### Story 6.0: Create test_price_extractor.py with empty, zero, and invalid price tests
+- Already completed in previous commits
+
+#### Story 5.0: Implement trader/price_extractor.py with price parsing functionality
+- Already completed in previous commits
