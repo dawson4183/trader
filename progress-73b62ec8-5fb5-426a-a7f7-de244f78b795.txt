@@ -9,6 +9,9 @@ Started: 2026-02-18
 - Tests should be in tests/ directory
 - Import from sibling modules: `from trader.retry import ...`
 - Mock `time.sleep` in retry tests to speed up execution
+- Mock `trader.circuit_breaker.time.time` (not just `time.time`) for circuit breaker tests
+- Circuit breaker wraps retry decorator - provide 5 mock failures when testing circuit opening
+- Layered error handling: circuit breaker (outer) → retry decorator (inner) → actual call
 
 ## 2026-02-18 18:12 EST - US-001: Create trader module structure with scraper.py
 - Created `trader/` directory with `__init__.py` exporting `Scraper` class
@@ -66,5 +69,59 @@ Started: 2026-02-18
 - Typecheck passes (syntax validation)
 - Files changed: `trader/circuit_breaker.py`, `tests/test_circuit_breaker.py`
 - **Learnings:** Using `Enum` for state management; mocking `time.time()` for time-based tests; circuit breaker pattern prevents cascading failures
+
+---
+
+## 2026-02-18 19:09 EST - US-005: Integrate circuit breaker with Scraper
+- Added CircuitBreaker instance to Scraper class with multiple initialization options:
+  - Default circuit breaker with sensible defaults (failure_threshold=5, recovery_timeout=30s)
+  - Optional `circuit_breaker` parameter to pass a pre-configured instance
+  - Optional `circuit_breaker_config` dict for custom configuration
+- Wrapped `fetch()` calls through circuit breaker using `cb.call(_fetch_with_retry, url)`
+- Renamed internal method to `_fetch_with_retry()` to make circuit breaker wrapping clear
+- Exposed `scraper.circuit_breaker` property for monitoring state and configuration
+- Exported `CircuitBreakerError` from `trader` package for easy access
+- Added `TestScraperCircuitBreakerIntegration` test class with 15 comprehensive tests:
+  - Scraper initializes with default/custom circuit breaker
+  - Scraper accepts circuit_breaker_config dict for configuration
+  - Circuit breaker instance takes precedence over config
+  - Fetch calls pass through circuit breaker
+  - Circuit breaker records successes and failures
+  - Circuit opens after threshold failures (with retry decorator accounted for)
+  - CircuitBreakerError raised when circuit is OPEN
+  - Half-open recovery behavior works correctly
+  - Scrape method uses circuit breaker via fetch()
+  - State property is exposed for monitoring
+  - Retry decorator and circuit breaker work together
+- All 85 tests pass (70 existing + 15 new scraper circuit breaker tests)
+- Typecheck passes (syntax validation)
+- Files changed: `trader/scraper.py`, `trader/__init__.py`, `tests/test_trader.py`
+- **Learnings:** Circuit breaker wraps retry decorator - so circuit only sees final result after all retries; need 5 mock failures per test when testing circuit failures; mock `trader.circuit_breaker.time.time` for time-based tests in scraper context
+
+---
+
+## 2026-02-18 19:47 EST - US-006: Implement state saving to JSON on crash
+- Created `trader/state.py` with `StateManager` class for state persistence:
+  - State includes: url, page, timestamp, items_processed, retry_count
+  - `save(filepath)` writes state to JSON file with directory creation
+  - `load(filepath)` restores state from JSON, returns False if file missing
+  - `record_item()` increments counter and triggers auto-save at intervals
+  - `update()` updates URL, page, or retry count selectively
+  - `save_on_crash()` saves state for crash recovery (best-effort, no exceptions)
+  - Configurable `auto_save_interval` (default every 10 items, 0 to disable)
+  - `to_dict()`/`from_dict()` for serialization with timestamp
+- Created `tests/test_state.py` with 31 comprehensive tests covering:
+  - Initialization with default and custom values
+  - State dictionary conversion (to_dict, from_dict)
+  - Save functionality (file creation, JSON content, directory creation)
+  - Load functionality (restore state, missing file handling)
+  - Auto-save triggers at configurable intervals
+  - Update method for partial state changes
+  - Crash save with graceful error handling
+  - Integration tests for full scraper workflow and crash recovery
+- All 31 new tests pass
+- Syntax validation passes
+- Files changed: `trader/state.py`, `tests/test_state.py`
+- **Learnings:** Using pathlib.Path for directory creation; auto-save counter reset after save; crash save should never raise exceptions; state persistence enables resume-from-crash functionality
 
 ---
