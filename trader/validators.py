@@ -1,6 +1,6 @@
 """Validation functions for the trader package."""
 
-from typing import List, Union
+from typing import Any, Dict, List, Union
 
 from bs4 import BeautifulSoup
 
@@ -60,3 +60,32 @@ def validate_price(price: Union[int, float]) -> bool:
         raise ValidationError(f'Price must be greater than 0, got: {price}')
 
     return True
+
+
+def deduplicate_items(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Remove duplicate items based on item_hash field, keeping first occurrence.
+
+    Args:
+        items: A list of dictionaries, each containing an 'item_hash' key.
+
+    Returns:
+        A new list with duplicates removed, preserving order of first occurrences.
+
+    Raises:
+        ValidationError: If any item is missing the 'item_hash' key.
+                         Error message format: 'Item missing item_hash: {item}'
+    """
+    seen_hashes: set[str] = set()
+    unique_items: List[Dict[str, Any]] = []
+
+    for item in items:
+        # Check if item has item_hash key
+        if 'item_hash' not in item:
+            raise ValidationError(f'Item missing item_hash: {item}')
+
+        item_hash = item['item_hash']
+        if item_hash not in seen_hashes:
+            seen_hashes.add(item_hash)
+            unique_items.append(item)
+
+    return unique_items

@@ -1,9 +1,11 @@
 """Tests for trader validators."""
 
+from typing import Any, Dict, List
+
 import pytest
 
 from trader.exceptions import ValidationError
-from trader.validators import validate_html_structure, validate_price
+from trader.validators import deduplicate_items, validate_html_structure, validate_price
 
 
 class TestValidateHtmlStructure:
@@ -190,3 +192,122 @@ class TestValidatePrice:
             validate_price(0)
 
         assert str(exc_info.value) == 'Price must be greater than 0, got: 0'
+
+
+class TestDeduplicateItems:
+    """Test cases for deduplicate_items function."""
+
+    def test_returns_empty_list_for_empty_input(self) -> None:
+        """Return empty list when input is empty."""
+        items: List[Dict[str, Any]] = []
+
+        result = deduplicate_items(items)
+
+        assert result == []
+
+    def test_returns_same_list_for_all_unique_items(self) -> None:
+        """Return same list when all items have unique item_hash."""
+        items = [
+            {'item_hash': 'abc123', 'name': 'Item 1'},
+            {'item_hash': 'def456', 'name': 'Item 2'},
+            {'item_hash': 'ghi789', 'name': 'Item 3'},
+        ]
+
+        result = deduplicate_items(items)
+
+        assert result == items
+
+    def test_removes_duplicate_items_keeps_first(self) -> None:
+        """Remove duplicates and keep first occurrence."""
+        items = [
+            {'item_hash': 'abc123', 'name': 'First'},
+            {'item_hash': 'def456', 'name': 'Item 2'},
+            {'item_hash': 'abc123', 'name': 'Duplicate'},
+        ]
+
+        result = deduplicate_items(items)
+
+        assert len(result) == 2
+        assert result[0]['name'] == 'First'
+        assert result[1]['name'] == 'Item 2'
+
+    def test_preserves_order_of_unique_items(self) -> None:
+        """Preserve original order for unique items."""
+        items = [
+            {'item_hash': 'hash3', 'name': 'Third'},
+            {'item_hash': 'hash1', 'name': 'First'},
+            {'item_hash': 'hash2', 'name': 'Second'},
+        ]
+
+        result = deduplicate_items(items)
+
+        assert result[0]['name'] == 'Third'
+        assert result[1]['name'] == 'First'
+        assert result[2]['name'] == 'Second'
+
+    def test_removes_multiple_duplicates(self) -> None:
+        """Remove multiple duplicate items correctly."""
+        items = [
+            {'item_hash': 'abc123', 'name': 'First'},
+            {'item_hash': 'abc123', 'name': 'Duplicate 1'},
+            {'item_hash': 'def456', 'name': 'Unique'},
+            {'item_hash': 'abc123', 'name': 'Duplicate 2'},
+            {'item_hash': 'def456', 'name': 'Duplicate 3'},
+        ]
+
+        result = deduplicate_items(items)
+
+        assert len(result) == 2
+        assert result[0]['name'] == 'First'
+        assert result[1]['name'] == 'Unique'
+
+    def test_raises_error_when_item_missing_item_hash(self) -> None:
+        """Raise ValidationError when item is missing item_hash key."""
+        items = [
+            {'item_hash': 'abc123', 'name': 'Valid'},
+            {'name': 'Invalid'},  # Missing item_hash
+        ]
+
+        with pytest.raises(ValidationError) as exc_info:
+            deduplicate_items(items)
+
+        error_message = str(exc_info.value)
+        assert 'Item missing item_hash:' in error_message
+
+    def test_raises_error_for_item_with_none_hash(self) -> None:
+        """Handle item_hash with None value as valid (not duplicate of another None)."""
+        items = [
+            {'item_hash': None, 'name': 'First'},
+            {'item_hash': None, 'name': 'Second'},
+        ]
+
+        result = deduplicate_items(items)
+
+        assert len(result) == 1
+        assert result[0]['name'] == 'First'
+
+    def test_handles_various_types_for_item_hash(self) -> None:
+        """Handle various hashable types for item_hash."""
+        items = [
+            {'item_hash': 'string', 'name': 'String'},
+            {'item_hash': 123, 'name': 'Integer'},
+            {'item_hash': 45.67, 'name': 'Float'},
+        ]
+
+        result = deduplicate_items(items)
+
+        assert len(result) == 3
+
+    def test_returns_new_list_does_not_modify_original(self) -> None:
+        """Return a new list without modifying the original."""
+        items = [
+            {'item_hash': 'abc123', 'name': 'First'},
+            {'item_hash': 'abc123', 'name': 'Duplicate'},
+        ]
+        original_length = len(items)
+
+        result = deduplicate_items(items)
+
+        assert len(result) == 1
+        assert len(items) == original_length  # Original unchanged
+        assert result is not items  # New list returned
