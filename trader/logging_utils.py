@@ -5,12 +5,14 @@ This module provides custom logging formatters and handlers for structured loggi
 
 import json
 import logging
+import os
 import urllib.request
 import urllib.error
 from datetime import datetime, timezone
+from logging.handlers import TimedRotatingFileHandler
 from typing import Any, Dict, Optional
 
-from trader import config
+import trader.config as config_module
 
 
 class JsonFormatter(logging.Formatter):
@@ -138,7 +140,7 @@ to a configured webhook URL. Network errors are gracefully suppressed to
             level: Minimum log level to process. Defaults to ERROR.
         """
         super().__init__(level=level)
-        self.webhook_url = webhook_url or config.WEBHOOK_URL
+        self.webhook_url = webhook_url or config_module.WEBHOOK_URL
     
     def emit(self, record: logging.LogRecord) -> None:
         """Send the log record to the webhook if level is ERROR or CRITICAL.
@@ -247,3 +249,70 @@ to a configured webhook URL. Network errors are gracefully suppressed to
                 continue
         
         return context if context else None
+
+
+def setup_logging() -> logging.Logger:
+    """Configure the root logger with JSON formatter and multiple handlers.
+    
+    This function sets up a comprehensive logging configuration with:
+    - JSON formatting for all log output
+    - TimedRotatingFileHandler (daily rotation, 7 day retention)
+    - Console handler for stdout
+    - WebhookHandler for ERROR/CRITICAL level logs
+    
+    The function is idempotent - calling it multiple times will not add
+    duplicate handlers to the logger.
+    
+    The 'logs' directory is created automatically if it doesn't exist.
+    
+    Returns:
+        The configured root logger instance.
+    
+    Example:
+        >>> logger = setup_logging()
+        >>> logger.info("Application started", extra={"version": "1.0.0"})
+    """
+    # Get the root logger
+    logger = logging.getLogger()
+    
+    # Check if already configured (idempotency check)
+    # We check by looking for JsonFormatter in existing handlers
+    for handler in logger.handlers:
+        if isinstance(handler.formatter, JsonFormatter):
+            return logger
+    
+    # Set log level based on config
+    log_level = getattr(logging, config_module.LOG_LEVEL.upper(), logging.INFO)
+    logger.setLevel(log_level)
+    
+    # Create logs directory if it doesn't exist
+    log_dir = os.path.dirname(config_module.LOG_FILE_PATH)
+    if log_dir and not os.path.exists(log_dir):
+        os.makedirs(log_dir, exist_ok=True)
+    
+    # Create JSON formatter for all handlers
+    json_formatter = JsonFormatter()
+    
+    # Set up TimedRotatingFileHandler (daily rotation, 7 day retention)
+    file_handler = TimedRotatingFileHandler(
+        filename=config_module.LOG_FILE_PATH,
+        when='D',  # Daily rotation
+        interval=1,  # Every day
+        backupCount=config_module.LOG_RETENTION_DAYS,  # Keep 7 days of logs
+        encoding='utf-8'
+    )
+    file_handler.setFormatter(json_formatter)
+    logger.addHandler(file_handler)
+    
+    # Set up console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(json_formatter)
+    logger.addHandler(console_handler)
+    
+    # Set up webhook handler for ERROR/CRITICAL only
+    webhook_handler = WebhookHandler(level=logging.ERROR)
+    # WebhookHandler has built-in level filtering, but we set it explicitly
+    webhook_handler.setFormatter(json_formatter)
+    logger.addHandler(webhook_handler)
+    
+    return logger

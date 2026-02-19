@@ -1,0 +1,84 @@
+# Progress Log
+
+## Run ID: 56e7c9bc-f616-417e-b726-aa2abcae8b52
+
+## Task
+Add structured logging to trader/: use Python logging with JSON formatter (timestamp, level, message, context), add TimedRotatingFileHandler (7 days retention), add webhook handler for ERROR/CRITICAL logs that POSTs to WEBHOOK_URL from env. Configure in config.py.
+
+## Repo
+/home/dawson/.openclaw/workspaces/workflows/feature-dev/agents/planner
+
+## Branch
+feature/structured-logging
+
+### Completed Stories
+
+#### Story 1.0: Create config.py with logging configuration structure
+- Created trader/config.py with:
+  - LOG_LEVEL: Environment variable with default "INFO"
+  - LOG_FORMAT: JSON format string for structured logging
+  - LOG_RETENTION_DAYS: Integer parsed from env, defaults to 7
+  - WEBHOOK_URL: Optional[str] from environment
+  - LOG_FILE_PATH: Path to log file ("logs/trader.log")
+
+#### Story 2.0: Create JSON formatter for structured logging
+- Created JsonFormatter class extending logging.Formatter
+- Outputs JSON with timestamp, level (uppercase), message, and context
+- Timestamp in ISO 8601 format with UTC timezone
+- Context extraction from extra fields passed to logger
+- Skips standard LogRecord attributes to avoid duplication
+
+#### Story 3.0: Create webhook handler for ERROR/CRITICAL logs
+- Created WebhookHandler class extending logging.Handler
+- Filters to only ERROR and CRITICAL level logs (levelno >= 40)
+- Gracefully handles missing WEBHOOK_URL
+- POSTs JSON payload with timestamp, level, message, context
+- Suppresses all network errors to prevent app crashes
+- Uses 10-second timeout for webhook requests
+
+#### Story 4.0: Create setup_logging() function with TimedRotatingFileHandler
+- Created setup_logging() function in trader/logging_utils.py
+- Creates 'logs' directory if it doesn't exist
+- TimedRotatingFileHandler configured with 'D' interval and 7 day retention
+- TimedRotatingFileHandler uses JsonFormatter
+- Console handler uses JsonFormatter
+- WebhookHandler attached and filtered for ERROR/CRITICAL only
+- Returns configured logger instance
+- Idempotent - multiple calls don't duplicate handlers
+- Typecheck passes (mypy --ignore-missing-imports)
+- 50 tests pass for logging_utils module
+
+### Codebase Patterns
+
+#### Logging Structure
+- trader/logging_utils.py - Centralized logging utilities
+- trader/config.py - Configuration from environment variables
+- setup_logging() - Main entry point for initializing logging
+
+#### JSON Formatting
+- JsonFormatter extends logging.Formatter
+- ISO 8601 timestamps with UTC timezone
+- Context extraction from extra logger fields
+- Skip standard LogRecord attributes to avoid duplication
+
+#### Handler Configuration
+- TimedRotatingFileHandler: Daily rotation, 7-day retention
+- StreamHandler: Console output with JSON formatting
+- WebhookHandler: ERROR/CRITICAL only, graceful error handling
+
+#### Testing Approach
+- Unit tests for each component (formatter, handler, setup)
+- Integration tests for full logging pipeline
+- Mock external dependencies (webhook calls)
+- Clean up test artifacts (logs directory) in tests
+- Reset root logger handlers between tests
+
+### Pending Stories
+- Story 5.0: Add get_logger(name) helper function with context support
+- Story 6.0: Create example usage and integration tests
+- Story 7.0: Update CLI to use structured logging
+
+### Notes
+- Import pattern: `import trader.config as config_module` to avoid circular imports
+- TimedRotatingFileHandler interval is in seconds when 'D' is used (86400 = 1 day)
+- All log output is JSON formatted including console output
