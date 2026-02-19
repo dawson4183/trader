@@ -303,8 +303,10 @@ class ScraperState:
             FileNotFoundError: If state file doesn't exist
             json.JSONDecodeError: If state file is corrupted
         """
+        import typing
         with open(self.state_file, 'r') as f:
-            return json.load(f)
+            data: Dict[str, Any] = json.load(f)
+            return data
     
     def load_and_restore(self) -> None:
         """Load state from file and restore instance attributes."""
