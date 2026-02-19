@@ -48,11 +48,25 @@ feature/structured-logging
 - Typecheck passes (mypy --ignore-missing-imports)
 - 50 tests pass for logging_utils module
 
+#### Story 5.0: Integrate logging into trader module entry point
+- Updated trader/__init__.py to call setup_logging() on module import
+- Added logging to trader/validators.py functions:
+  - validate_html_structure(): Logs WARNING with missing_selectors context
+  - validate_price(): Logs WARNING with price and validation_rule context
+  - deduplicate_items(): Logs INFO with deduplication stats, ERROR for missing item_hash
+- Added trader/validators.py module with validation functions (was previously inline)
+- All exception handlers log at ERROR level before re-raising
+- Logs directory is gitignored (.gitignore updated with 'logs/')
+- Typecheck passes (mypy on trader/__init__.py, validators.py, logging_utils.py, config.py)
+- 13 new tests added for logging integration in tests/test_item_parser_logging.py
+- All 108 tests pass (including existing logging_utils tests)
+
 ### Codebase Patterns
 
 #### Logging Structure
 - trader/logging_utils.py - Centralized logging utilities
 - trader/config.py - Configuration from environment variables
+- trader/__init__.py - Calls setup_logging() on import to auto-initialize
 - setup_logging() - Main entry point for initializing logging
 
 #### JSON Formatting
@@ -72,13 +86,22 @@ feature/structured-logging
 - Mock external dependencies (webhook calls)
 - Clean up test artifacts (logs directory) in tests
 - Reset root logger handlers between tests
+- Test logging output using caplog fixture to verify log levels and context
+
+#### Validation with Logging
+- trader/validators.py: Centralized validation functions
+- Log WARNING on validation failures (validate_html_structure, validate_price)
+- Log INFO on operation stats (deduplicate_items)
+- Log ERROR before raising ValidationError (missing item_hash)
+- Context includes relevant data: selectors, prices, counts, rates
 
 ### Pending Stories
-- Story 5.0: Add get_logger(name) helper function with context support
-- Story 6.0: Create example usage and integration tests
-- Story 7.0: Update CLI to use structured logging
+- Story 6.0: Add get_logger(name) helper function with context support
+- Story 7.0: Create example usage and integration tests
 
 ### Notes
 - Import pattern: `import trader.config as config_module` to avoid circular imports
 - TimedRotatingFileHandler interval is in seconds when 'D' is used (86400 = 1 day)
 - All log output is JSON formatted including console output
+- Logging is auto-initialized when trader package is imported
+- validator functions use module-level logger: `logger = logging.getLogger(__name__)`
